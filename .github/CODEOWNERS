@@ -1,0 +1,24 @@
+# CODEOWNERS - who is automatically asked to review changes.
+#
+# BEFORE COMMITTING: replace every placeholder below with a real GitHub
+# username (starting with @). An invalid username makes GitHub show an
+# error on this file, and the rule is ignored.
+#
+# The last matching rule wins, so keep the default first and specific rules after.
+
+# Default: the repo owner reviews everything
+*                                   @REPO_OWNER_USERNAME
+
+# Shared code and database: owner must always review
+/packages/shared/                   @REPO_OWNER_USERNAME
+/apps/web/prisma/                   @REPO_OWNER_USERNAME
+
+# CI, templates and repo settings: owner only
+/.github/                           @REPO_OWNER_USERNAME
+
+# Module owners (add once modules are assigned; examples, delete the # to enable):
+# /apps/web/src/server/modules/listings/        @MEMBER_1_USERNAME
+# /apps/web/src/server/modules/reservations/    @MEMBER_2_USERNAME
+# /apps/web/src/server/modules/matching/        @MEMBER_3_USERNAME
+# /apps/web/src/app/(admin)/                    @MEMBER_4_USERNAME
+# /apps/mobile/                                 @MEMBER_1_USERNAME

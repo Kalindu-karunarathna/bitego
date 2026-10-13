@@ -147,3 +147,25 @@ vite.config.ts.timestamp-*
 
 # Turbo Repo
 .turbo
+# Expo / React Native
+.expo/
+expo-env.d.ts
+*.jks
+*.keystore
+*.p8
+*.p12
+*.mobileprovision
+google-services.json
+GoogleService-Info.plist
+
+# Keys and certificates
+*.pem
+*.key
+
+# OS / editor files
+.DS_Store
+Thumbs.db
+.idea/
+
+# Private documents (proposal, interview data) - never commit
+docs/private/

@@ -1,0 +1,12 @@
+{
+  "name": "bitego",
+  "private": true,
+  "engines": { "node": ">=22" },
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev:web": "npm run dev -w @bitego/web",
+    "dev:mobile": "npm run start -w @bitego/mobile",
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  }
+}
