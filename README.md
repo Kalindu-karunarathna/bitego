@@ -96,7 +96,7 @@ Members work in their own fork and send changes by pull request.
    ```bash
    git clone https://github.com/<your-username>/bitego.git
    cd bitego
-   git remote add upstream https://github.com/<owner-username>/bitego.git
+   git remote add upstream https://github.com/Kalindu-karunarathna/bitego.git
    git checkout <your-branch-name>
    npm install
    ```
@@ -141,10 +141,12 @@ first, and everyone syncs before running migrations.
 | Branch | Purpose |
 | --- | --- |
 | `main` | Final, working code (owner merges here) |
+| `development` | development code |
 | `kajanika` | Member branch |
 | `nistha` | Member branch |
 | `sachira` | Member branch |
-| `karunarathna` | Member branch |
+| `kalindu` | Member branch |
+
 
 ## Security notes
 
@@ -153,6 +155,4 @@ first, and everyone syncs before running migrations.
   Anything prefixed `EXPO_PUBLIC_` is bundled into the app and readable by users.
 - Do not commit real personal data (contact details, survey or interview responses).
 
-## License
 
-Add a license here (for example MIT) or state "All rights reserved" for coursework.
