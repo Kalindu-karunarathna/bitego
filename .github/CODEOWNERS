@@ -7,11 +7,11 @@
 # The last matching rule wins, so keep the default first and specific rules after.
 
 # Default: the repo owner reviews everything
-*                                   @REPO_OWNER_USERNAME
+*                                   @Kalindu-karunarathna
 
 # Shared code and database: owner must always review
-/packages/shared/                   @REPO_OWNER_USERNAME
-/apps/web/prisma/                   @REPO_OWNER_USERNAME
+/packages/shared/                   @Kalindu-karunarathna 
+/apps/web/prisma/                   @Kalindu-karunarathna
 
 # CI, templates and repo settings: owner only
 /.github/                           @REPO_OWNER_USERNAME
