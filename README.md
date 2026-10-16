@@ -155,4 +155,3 @@ first, and everyone syncs before running migrations.
   Anything prefixed `EXPO_PUBLIC_` is bundled into the app and readable by users.
 - Do not commit real personal data (contact details, survey or interview responses).
 
-k
