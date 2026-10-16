@@ -14,7 +14,7 @@
 /apps/web/prisma/                   @Kalindu-karunarathna
 
 # CI, templates and repo settings: owner only
-/.github/                           @REPO_OWNER_USERNAME
+/.github/                           @Kalindu-karunarathna
 
 # Module owners (add once modules are assigned; examples, delete the # to enable):
 # /apps/web/src/server/modules/listings/        @MEMBER_1_USERNAME
