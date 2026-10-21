@@ -238,26 +238,132 @@ Create or update preferences. All fields are optional — only the ones you send
 
 ---
 
-## For module developers
+## Integration Guide for Teammates
+
+Contract functions live in `src/server/modules/`:
+- `notify(...)`: `src/server/modules/notifications/notify.ts`
+- `onListingCreated(...)`: `src/server/modules/matching/matching.ts`
+
+### 1. Kalindu (Admin Module)
+Call `notify()` when a business is reviewed:
 
 ```ts
-// Calling notify() — anyone may import and await this.
 import { notify } from "@/server/modules/notifications/notify";
 
+// When approved:
 await notify({
-  userId: user.id,
+  userId: business.ownerId,
+  type: "BUSINESS_APPROVED",
+  title: "Business approved",
+  message: "Your business has been verified. You can now post surplus food.",
+});
+
+// When rejected:
+await notify({
+  userId: business.ownerId,
+  type: "BUSINESS_REJECTED",
+  title: "Business application rejected",
+  message: remarks ? `Reason: ${remarks}` : "Your business application was not approved.",
+});
+```
+
+### 2. Nistha (Buyer / Reservations Module)
+Call `notify()` during reservation lifecycle events:
+
+```ts
+import { notify } from "@/server/modules/notifications/notify";
+
+// When a customer makes a reservation:
+// 1. Notify the business seller
+await notify({
+  userId: listing.business.ownerId,
   type: "NEW_RESERVATION",
   title: "New reservation",
-  message: `${buyer.fullName} reserved 2 portions of your listing.`,
+  message: `${buyer.fullName} reserved ${reservation.quantity} item(s) from "${listing.title}".`,
+  listingId: listing.id,
+  reservationId: reservation.id,
+});
+
+// 2. Notify the buyer confirming their reservation
+await notify({
+  userId: buyer.id,
+  type: "RESERVATION_CONFIRMED",
+  title: "Reservation confirmed",
+  message: `Your reservation for "${listing.title}" is confirmed. Pickup code: ${reservation.pickupCode}`,
+  listingId: listing.id,
+  reservationId: reservation.id,
+});
+
+// When a reservation is cancelled:
+await notify({
+  userId: targetUserId,
+  type: "RESERVATION_CANCELLED",
+  title: "Reservation cancelled",
+  message: `Reservation for "${listing.title}" has been cancelled.`,
   listingId: listing.id,
   reservationId: reservation.id,
 });
 ```
 
+### 3. Kajanika (Seller / Listings Module)
+Call `onListingCreated()` immediately after inserting a new listing:
+
 ```ts
-// Calling onListingCreated() — Kajanika calls this after creating a listing.
 import { onListingCreated } from "@/server/modules/matching/matching";
 
-void onListingCreated(listing.id); // fire-and-forget, do not await
+// Fire-and-forget: do NOT await this in the response path
+void onListingCreated(listing.id);
 ```
 
+When all portions of a listing are reserved:
+```ts
+await notify({
+  userId: business.ownerId,
+  type: "LISTING_SOLD_OUT",
+  title: "Listing sold out",
+  message: `All portions of "${listing.title}" have been reserved.`,
+  listingId: listing.id,
+});
+```
+
+---
+
+## Testing with curl
+
+### 1. List Notifications
+```bash
+curl -X GET "http://localhost:3000/api/v1/notifications?page=1&unread=true" \
+  -H "Authorization: Bearer <TOKEN>"
+```
+
+### 2. Mark One as Read
+```bash
+curl -X PATCH "http://localhost:3000/api/v1/notifications/<NOTIFICATION_ID>/read" \
+  -H "Authorization: Bearer <TOKEN>"
+```
+
+### 3. Mark All as Read
+```bash
+curl -X POST "http://localhost:3000/api/v1/notifications/mark-all-read" \
+  -H "Authorization: Bearer <TOKEN>"
+```
+
+### 4. Get Preferences
+```bash
+curl -X GET "http://localhost:3000/api/v1/preferences" \
+  -H "Authorization: Bearer <TOKEN>"
+```
+
+### 5. Update Preferences
+```bash
+curl -X PUT "http://localhost:3000/api/v1/preferences" \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "notifyRadiusKm": 5,
+    "notificationsEnabled": true,
+    "approxLatitude": 6.9271,
+    "approxLongitude": 79.8612,
+    "preferredCategoryIds": []
+  }'
+```
