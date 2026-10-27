@@ -20,3 +20,9 @@ export function updatePreferences(input: UpdatePreferencesInput): Promise<UserPr
   });
 }
 
+/**
+ * Fetches active food categories available for preference selection.
+ */
+export function fetchCategories(): Promise<{ id: string; name: string }[]> {
+  return apiFetch<{ id: string; name: string }[]>("/categories", { auth: false });
+}
