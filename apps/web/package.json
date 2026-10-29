@@ -19,11 +19,13 @@
     "@bitego/shared": "*",
     "@prisma/adapter-pg": "^7.10.1",
     "@prisma/client": "^7.10.1",
+    "@supabase/supabase-js": "^2.118.0",
     "dotenv": "^18.0.9",
     "next": "16.4.0",
     "pg": "^8.23.1",
     "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "react-dom": "19.2.3",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@tailwindcss/turbopack": "^4",
