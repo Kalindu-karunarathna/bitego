@@ -57,7 +57,7 @@ List the authenticated user's notifications, newest first.
 | `NEW_NEARBY_LISTING` | Customer / B2B business | A new listing is posted near them (`onListingCreated`) |
 | `NEW_RESERVATION` | Business (seller) | A customer reserves one of their listings |
 | `RESERVATION_CONFIRMED` | Customer (buyer) | Their reservation is confirmed |
-| `RESERVATION_CANCELLED` | Both parties | A reservation is cancelled |
+| `RESERVATION_CANCELLED` | Both parties | A reservation is cancelled or expired |
 | `LISTING_NEARING_EXPIRY` | Business (seller) | Pickup window ends within 1 hour |
 | `LISTING_SOLD_OUT` | Business (seller) | All quantity reserved |
 | `PICKUP_REMINDER` | Customer (buyer) | Pickup window ends within 30 minutes |
@@ -238,6 +238,35 @@ Create or update preferences. All fields are optional — only the ones you send
 
 ---
 
+## Scheduled Background Jobs (Cron)
+
+These endpoints run periodically (e.g. via Vercel Cron, GitHub Actions, or scheduled worker) to maintain system consistency.
+Protected by `CRON_SECRET` sent via `Authorization: Bearer <CRON_SECRET>` or `x-cron-secret: <CRON_SECRET>` header.
+
+### GET or POST /cron/expire
+
+Expires listings past their pickup deadline (`pickupEnd <= now()`) and marks uncollected reservations as `EXPIRED`, sending an in-app alert to the customer.
+
+**200 response**
+
+```json
+{
+  "data": {
+    "expiredListingsCount": 2,
+    "expiredReservationsCount": 1,
+    "timestamp": "2026-10-29T06:30:00.000Z"
+  }
+}
+```
+
+**Errors**
+
+| Status | Code | Meaning |
+|---|---|---|
+| 401 | `UNAUTHORIZED` | Invalid or missing cron secret |
+
+---
+
 ## Integration Guide for Teammates
 
 Contract functions live in `src/server/modules/`:
@@ -366,4 +395,10 @@ curl -X PUT "http://localhost:3000/api/v1/preferences" \
     "approxLongitude": 79.8612,
     "preferredCategoryIds": []
   }'
+```
+
+### 6. Trigger Expiry Cron Job
+```bash
+curl -X POST "http://localhost:3000/api/v1/cron/expire" \
+  -H "Authorization: Bearer <CRON_SECRET>"
 ```
