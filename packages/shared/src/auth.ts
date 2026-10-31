@@ -14,18 +14,18 @@ const password = z
 const fullName = z.string().trim().min(2, "Enter your full name").max(100);
 
 const businessDetails = z.object({
-  name: z.string().trim().min(2).max(120),
-  type: z.enum(BUSINESS_TYPES),
+  name: z.string().trim().min(2, "Enter the business name").max(120),
+  type: z.enum(BUSINESS_TYPES, { error: "Choose a business type" }),
   registrationNo: z.string().trim().min(1).max(50).optional(),
   description: z.string().trim().max(500).optional(),
   contactNo: phone,
   email: email.optional(),
-  addressLine: z.string().trim().min(3).max(200),
-  city: z.string().trim().min(2).max(80),
+  addressLine: z.string().trim().min(3, "Enter the shop address").max(200),
+  city: z.string().trim().min(2, "Enter the city").max(80),
   district: z.string().trim().min(2).max(80).optional(),
   // Shop location: from the phone's GPS button and the map pin.
-  latitude: z.number().min(-90).max(90),
-  longitude: z.number().min(-180).max(180),
+  latitude: z.number({ error: "Set your shop location" }).min(-90).max(90),
+  longitude: z.number({ error: "Set your shop location" }).min(-180).max(180),
   // Business registration document (uploaded first, then its URL is sent here).
   documentUrl: z.url().optional(),
 });
