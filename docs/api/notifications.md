@@ -267,6 +267,34 @@ Expires listings past their pickup deadline (`pickupEnd <= now()`) and marks unc
 
 ---
 
+### GET or POST /cron/remind
+
+Scans for time-sensitive events and sends reminder notifications:
+1. **Nearing Expiry**: Finds active listings expiring within 1 hour and sends `LISTING_NEARING_EXPIRY` to the seller.
+2. **Pickup Deadline**: Finds confirmed reservations expiring within 30 minutes and sends `PICKUP_REMINDER` to the customer.
+
+Deduplicated so recurring runs (e.g. every 5–15 minutes) only notify once per listing or reservation.
+
+**200 response**
+
+```json
+{
+  "data": {
+    "nearingExpiryListingsNotified": 1,
+    "pickupRemindersNotified": 2,
+    "timestamp": "2026-11-01T07:00:00.000Z"
+  }
+}
+```
+
+**Errors**
+
+| Status | Code | Meaning |
+|---|---|---|
+| 401 | `UNAUTHORIZED` | Invalid or missing cron secret |
+
+---
+
 ## Integration Guide for Teammates
 
 Contract functions live in `src/server/modules/`:
@@ -400,5 +428,11 @@ curl -X PUT "http://localhost:3000/api/v1/preferences" \
 ### 6. Trigger Expiry Cron Job
 ```bash
 curl -X POST "http://localhost:3000/api/v1/cron/expire" \
+  -H "Authorization: Bearer <CRON_SECRET>"
+```
+
+### 7. Trigger Reminders Cron Job
+```bash
+curl -X POST "http://localhost:3000/api/v1/cron/remind" \
   -H "Authorization: Bearer <CRON_SECRET>"
 ```
