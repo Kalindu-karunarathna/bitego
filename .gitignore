@@ -169,3 +169,5 @@ Thumbs.db
 
 # Private documents (proposal, interview data) - never commit
 docs/private/
+
+.env

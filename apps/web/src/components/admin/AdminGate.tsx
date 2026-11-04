@@ -12,7 +12,13 @@ import { supabaseBrowser } from "@/lib/supabase-browser";
 
 type Gate = { state: "checking" } | { state: "ok"; me: MeResponse } | { state: "denied"; message: string };
 
-const NAV = [{ href: "/admin/businesses", label: "Businesses" }];
+const NAV = [
+  { href: "/admin/analytics", label: "Analytics" },
+  { href: "/admin/businesses", label: "Businesses" },
+  { href: "/admin/users", label: "Users" },
+  { href: "/admin/categories", label: "Categories" },
+  { href: "/admin/audit-log", label: "Audit log" },
+];
 
 export function AdminGate({ children }: { children: ReactNode }) {
   const pathname = usePathname();
