@@ -7,7 +7,7 @@ import {
   View,
 } from "react-native";
 import { useRouter } from "expo-router";
-import { LocationPicker, type Coordinates } from "@/components/LocationPicker";
+import { PreferencesLocationPicker, type Coordinates } from "@/features/preferences/PreferencesLocationPicker";
 import {
   Banner,
   Body,
@@ -201,8 +201,9 @@ export default function PreferencesScreen() {
 
         {showLocationPicker ? (
           <View style={styles.mapContainer}>
-            <LocationPicker
+            <PreferencesLocationPicker
               value={coords}
+              radiusKm={radiusKm}
               onChange={(newCoords) => setCoords(newCoords)}
             />
           </View>
