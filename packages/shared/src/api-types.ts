@@ -33,3 +33,12 @@ export type RegisterResponse = {
 export type ApiErrorBody = {
   error: { code: string; message: string; details?: unknown };
 };
+
+// GET /categories
+export type CategoryDto = {
+  id: string;
+  name: string;
+  description: string | null;
+  iconUrl: string | null;
+  b2bSuitability: "SUITABLE" | "RESTRICTED" | "UNSUITABLE";
+};
