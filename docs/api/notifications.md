@@ -436,3 +436,29 @@ curl -X POST "http://localhost:3000/api/v1/cron/expire" \
 curl -X POST "http://localhost:3000/api/v1/cron/remind" \
   -H "Authorization: Bearer <CRON_SECRET>"
 ```
+
+### 8. Register Device Push Token
+```bash
+curl -X POST "http://localhost:3000/api/v1/notifications/push-token" \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "token": "ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]",
+    "platform": "ANDROID"
+  }'
+```
+
+### 9. Remove Device Push Token (Logout)
+```bash
+# Via JSON request body:
+curl -X DELETE "http://localhost:3000/api/v1/notifications/push-token" \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "token": "ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]"
+  }'
+
+# Or via query parameter:
+curl -X DELETE "http://localhost:3000/api/v1/notifications/push-token?token=ExponentPushToken%5Bxxxxxxxxxxxxxxxxxxxxxx%5D" \
+  -H "Authorization: Bearer <TOKEN>"
+```
