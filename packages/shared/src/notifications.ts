@@ -55,11 +55,31 @@ export const registerPushTokenSchema = z.object({
 });
 export type RegisterPushTokenInput = z.infer<typeof registerPushTokenSchema>;
 
+export type RegisterPushTokenResponse = {
+  registered: boolean;
+  id?: string;
+  token?: string;
+  platform?: DevicePlatform;
+  lastSeenAt?: string;
+};
+
 /** DELETE /api/v1/notifications/push-token — deregister on logout */
 export const removePushTokenSchema = z.object({
   token: z.string().trim().min(1, "Token is required"),
 });
 export type RemovePushTokenInput = z.infer<typeof removePushTokenSchema>;
+
+export type RemovePushTokenResponse = {
+  removed: boolean;
+};
+
+/** Device token summary shape */
+export type DeviceTokenItem = {
+  id: string;
+  token: string;
+  platform: DevicePlatform;
+  lastSeenAt: string;
+};
 
 /** GET /api/v1/notifications query params */
 export const listNotificationsQuerySchema = z.object({

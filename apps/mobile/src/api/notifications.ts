@@ -1,7 +1,9 @@
 import type {
   NotificationsListResponse,
   RegisterPushTokenInput,
+  RegisterPushTokenResponse,
   RemovePushTokenInput,
+  RemovePushTokenResponse,
 } from "@bitego/shared";
 import { apiFetch } from "@/api/client";
 
@@ -46,8 +48,8 @@ export function markAllNotificationsRead(): Promise<{ updatedCount: number }> {
 /**
  * Registers an Expo push token with the backend.
  */
-export function registerPushToken(input: RegisterPushTokenInput): Promise<{ registered: boolean }> {
-  return apiFetch<{ registered: boolean }>("/notifications/push-token", {
+export function registerPushToken(input: RegisterPushTokenInput): Promise<RegisterPushTokenResponse> {
+  return apiFetch<RegisterPushTokenResponse>("/notifications/push-token", {
     method: "POST",
     body: input,
   });
@@ -56,8 +58,8 @@ export function registerPushToken(input: RegisterPushTokenInput): Promise<{ regi
 /**
  * Removes an Expo push token from the backend upon logout.
  */
-export function removePushToken(input: RemovePushTokenInput): Promise<{ removed: boolean }> {
-  return apiFetch<{ removed: boolean }>("/notifications/push-token", {
+export function removePushToken(input: RemovePushTokenInput): Promise<RemovePushTokenResponse> {
+  return apiFetch<RemovePushTokenResponse>("/notifications/push-token", {
     method: "DELETE",
     body: input,
   });
