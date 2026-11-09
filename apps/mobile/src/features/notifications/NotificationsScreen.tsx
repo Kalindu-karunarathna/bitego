@@ -4,6 +4,8 @@ import { useRouter } from "expo-router";
 import type { NotificationItem } from "@bitego/shared";
 import { useNotifications } from "@/features/notifications/useNotifications";
 import { NotificationList } from "@/features/notifications/NotificationList";
+import { usePushRegistration } from "@/features/notifications/usePushRegistration";
+import { PushPermissionBanner } from "@/features/notifications/PushPermissionBanner";
 
 // Owner: Sachira. Reusable Notifications screen used by both customer and business tabs.
 
@@ -24,6 +26,9 @@ export function NotificationsScreen({
     markOneRead,
     markAllRead,
   } = useNotifications();
+
+  // Automatically registers device push token on screen mount
+  const { status: pushStatus, register: requestPushPermission } = usePushRegistration();
 
   const handleNotificationPress = (item: NotificationItem) => {
     // Mark as read immediately on tap
@@ -50,6 +55,10 @@ export function NotificationsScreen({
   return (
     <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
       <View style={styles.container}>
+        <PushPermissionBanner
+          status={pushStatus}
+          onRequestPermission={requestPushPermission}
+        />
         <NotificationList
           notifications={notifications}
           unreadCount={unreadCount}
