@@ -462,3 +462,18 @@ curl -X DELETE "http://localhost:3000/api/v1/notifications/push-token" \
 curl -X DELETE "http://localhost:3000/api/v1/notifications/push-token?token=ExponentPushToken%5Bxxxxxxxxxxxxxxxxxxxxxx%5D" \
   -H "Authorization: Bearer <TOKEN>"
 ```
+
+---
+
+## Mobile Push Token Registration Flow
+
+### Overview
+The mobile app automatically registers the device's Expo push token upon mounting the notifications screen (or after user login) via `usePushRegistration`.
+
+### Lifecycle
+1. **Permission Check**: Requests notification permission from the OS (`requestPermissionsAsync`).
+2. **Channel Setup (Android)**: Configures high-importance notification channel (`bitego_default`) with custom accent color (`#E65100`).
+3. **Token Generation**: Obtains Expo push token (`ExponentPushToken[...]`).
+4. **Backend Sync**: Dispatches `POST /api/v1/notifications/push-token` with `{ token, platform }`.
+5. **Logout Cleanup**: On user sign-out, dispatches `DELETE /api/v1/notifications/push-token` with `{ token }` to deregister the device.
+6. **Web & Simulator Fallback**: Gracefully marks status as `unsupported` on Web without crashing, and provides fallback token in development.
