@@ -1,5 +1,6 @@
 import type { NotificationTypeName } from "@bitego/shared";
 import { prisma } from "@/lib/prisma";
+import { sendPush } from "@/server/modules/notifications/push.service";
 
 // CONTRACT. Anyone may call notify(); Sachira owns the body.
 // Do NOT change the signature without telling the team.
@@ -13,9 +14,10 @@ export type NotifyInput = {
 };
 
 /**
- * Saves an in-app notification for the user.
+ * Saves an in-app notification for the user and dispatches an Expo push notification
+ * to all active devices registered to that user.
  * Silently skips if the user has turned notifications off in their preferences.
- * Push delivery will be added in feature/sachira-push-send (Week 4).
+ * Push delivery is fire-and-forget so delivery failures never disrupt business flows.
  */
 export async function notify(input: NotifyInput): Promise<void> {
   // Respect the user's master notification toggle.
@@ -26,7 +28,7 @@ export async function notify(input: NotifyInput): Promise<void> {
   });
   if (pref && !pref.notificationsEnabled) return;
 
-  await prisma.notification.create({
+  const notification = await prisma.notification.create({
     data: {
       userId: input.userId,
       type: input.type,
@@ -35,5 +37,19 @@ export async function notify(input: NotifyInput): Promise<void> {
       listingId: input.listingId ?? null,
       reservationId: input.reservationId ?? null,
     },
+  });
+
+  // Fire-and-forget push dispatch: do NOT await, do NOT throw in caller
+  void sendPush(input.userId, {
+    title: input.title,
+    body: input.message,
+    data: {
+      notificationId: notification.id,
+      type: input.type,
+      listingId: input.listingId ?? null,
+      reservationId: input.reservationId ?? null,
+    },
+  }).catch((err) => {
+    console.error(`[notify] Failed to dispatch push notification to user ${input.userId}:`, err);
   });
 }
