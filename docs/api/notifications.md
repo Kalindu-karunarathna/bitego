@@ -477,3 +477,24 @@ The mobile app automatically registers the device's Expo push token upon mountin
 4. **Backend Sync**: Dispatches `POST /api/v1/notifications/push-token` with `{ token, platform }`.
 5. **Logout Cleanup**: On user sign-out, dispatches `DELETE /api/v1/notifications/push-token` with `{ token }` to deregister the device.
 6. **Web & Simulator Fallback**: Gracefully marks status as `unsupported` on Web without crashing, and provides fallback token in development.
+
+---
+
+## Backend Push Delivery & Dispatch Pipeline
+
+### Overview
+Whenever `notify()` is invoked (by reservation confirmation, new nearby listing matching, reminder jobs, or business verification), it:
+1. Checks the recipient's master notification toggle (`UserPreference.notificationsEnabled`).
+2. Persists the in-app notification row in the PostgreSQL database.
+3. Automatically dispatches asynchronous, fire-and-forget push notifications via `sendPush(userId, payload)` to all active devices registered by that user.
+
+### Stale Token Pruning (`DeviceNotRegistered`)
+When a user uninstalls the mobile app, Expo's Push API returns an error ticket with:
+```json
+{
+  "status": "error",
+  "message": "\"ExponentPushToken[...]\" is not a registered push token.",
+  "details": { "error": "DeviceNotRegistered" }
+}
+```
+The `sendPush` function detects `DeviceNotRegistered` errors in the delivery response and immediately purges those tokens from the `device_tokens` table (`prisma.deviceToken.deleteMany`), preventing future unneeded calls.
