@@ -498,3 +498,45 @@ When a user uninstalls the mobile app, Expo's Push API returns an error ticket w
 }
 ```
 The `sendPush` function detects `DeviceNotRegistered` errors in the delivery response and immediately purges those tokens from the `device_tokens` table (`prisma.deviceToken.deleteMany`), preventing future unneeded calls.
+
+---
+
+## Business Location Map Component (`BusinessLocationMap`)
+
+Owner: Sachira  
+Exported from: `apps/mobile/src/features/notifications/BusinessLocationMap.tsx` (with `.web.tsx` cross-platform support)
+
+### Integration Guide for Nistha (Listing Detail Screen)
+Drop this component into `apps/mobile/app/(customer)/discover/[id].tsx` to display the seller's shop location, real-time distance and estimated travel time, and a direct link to external turn-by-turn navigation.
+
+```tsx
+import { BusinessLocationMap } from "@/features/notifications/BusinessLocationMap";
+
+// In your listing detail view:
+<BusinessLocationMap
+  latitude={listing.business.latitude}
+  longitude={listing.business.longitude}
+  name={listing.business.name}
+  address={listing.business.addressLine}
+  userLatitude={userCoords?.latitude}
+  userLongitude={userCoords?.longitude}
+/>
+```
+
+### Component Props
+
+| Prop | Type | Default | Description |
+|---|---|---|---|
+| `latitude` | `number` | Required | Shop latitude coordinate |
+| `longitude` | `number` | Required | Shop longitude coordinate |
+| `name` | `string` | Required | Business/store name displayed on the pin callout and card |
+| `address` | `string` | `undefined` | Business street address line |
+| `userLatitude` | `number` | `undefined` | Current customer latitude (for distance/ETA). If omitted, attempts passive GPS lookup |
+| `userLongitude` | `number` | `undefined` | Current customer longitude (for distance/ETA) |
+| `height` | `number` | `200` | Map viewport height in pixels |
+| `interactive` | `boolean` | `false` | Enable/disable map pan and zoom gestures |
+
+### Features
+- **Native & Web Rendering**: Renders `react-native-maps` on mobile; automatically falls back to an embedded responsive iframe on Web (`npm run web`).
+- **Distance & Travel Times**: Calculates Haversine distance and estimates city driving time (avg 25 km/h) and walking time (avg 4.8 km/h).
+- **Direct Navigation**: "Open in Google Maps" button opens Apple Maps on iOS, Google Maps on Android, or web browser directions on desktop.
