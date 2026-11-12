@@ -89,3 +89,20 @@ export const listNotificationsQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
 });
 export type ListNotificationsQuery = z.infer<typeof listNotificationsQuerySchema>;
+
+// Reservation pickup routing. The server chooses the destination from the order.
+export const pickupCoordinatesSchema = z.object({
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+});
+export const pickupRouteRequestSchema = z.object({
+  reservationId: z.uuid(),
+  origin: pickupCoordinatesSchema,
+}).strict();
+export type PickupRouteInput = z.infer<typeof pickupRouteRequestSchema>;
+export type PickupRouteResponse = {
+  destination: z.infer<typeof pickupCoordinatesSchema>;
+  coordinates: z.infer<typeof pickupCoordinatesSchema>[];
+  distanceMeters: number;
+  durationSeconds: number;
+};

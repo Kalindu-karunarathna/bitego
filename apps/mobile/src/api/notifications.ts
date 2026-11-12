@@ -1,5 +1,7 @@
 import type {
   NotificationsListResponse,
+  PickupRouteInput,
+  PickupRouteResponse,
   RegisterPushTokenInput,
   RegisterPushTokenResponse,
   RemovePushTokenInput,
@@ -65,3 +67,9 @@ export function removePushToken(input: RemovePushTokenInput): Promise<RemovePush
   });
 }
 
+/** Route to the authenticated buyer's reservation; server selects the shop. */
+export function fetchPickupRoute(input: PickupRouteInput): Promise<PickupRouteResponse> {
+  return apiFetch<PickupRouteResponse>("/notifications/pickup-route", {
+    method: "POST", body: input,
+  });
+}
