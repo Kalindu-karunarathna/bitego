@@ -14,7 +14,7 @@ export async function onListingCreated(listingId: string): Promise<void> {
   try {
     const listing = await loadListingForMatching(listingId);
     if (!listing) {
-      console.warn(`[matching] Listing not found for ID: ${listingId}`);
+      console.warn(`[matching] Listing not found or ineligible for ID: ${listingId}`);
       return;
     }
 

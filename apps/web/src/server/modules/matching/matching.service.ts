@@ -29,9 +29,15 @@ export type MatchedUser = {
   distanceKm: number;
 };
 
+function hasValidCoordinates(latitude: number, longitude: number): boolean {
+  return Number.isFinite(latitude) && latitude >= -90 && latitude <= 90 &&
+    Number.isFinite(longitude) && longitude >= -180 && longitude <= 180;
+}
+
 /**
  * Calculates the great-circle distance between two points on Earth (in kilometers)
- * using the Haversine formula.
+ * using the Haversine formula. Invalid coordinates return Infinity (never nearby).
+ * Keep full precision for radius comparisons; round only for display.
  */
 export function calculateDistanceKm(
   lat1: number,
@@ -39,6 +45,8 @@ export function calculateDistanceKm(
   lat2: number,
   lon2: number,
 ): number {
+  if (!hasValidCoordinates(lat1, lon1) || !hasValidCoordinates(lat2, lon2)) return Infinity;
+
   const R = 6371; // Earth's mean radius in km
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
   const dLon = ((lon2 - lon1) * Math.PI) / 180;
@@ -50,12 +58,14 @@ export function calculateDistanceKm(
       Math.sin(dLon / 2) *
       Math.sin(dLon / 2);
 
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return Math.round(R * c * 100) / 100; // Round to 2 decimal places
+  const clamped = Math.max(0, Math.min(1, a));
+  const c = 2 * Math.atan2(Math.sqrt(clamped), Math.sqrt(1 - clamped));
+  return R * c;
 }
 
 /**
- * Loads a listing along with its business location and category suitability.
+ * Loads an eligible listing with its business location and category suitability.
+ * Eligibility is checked from the fetched snapshot, not locked through delivery.
  */
 export async function loadListingForMatching(
   listingId: string,
@@ -68,6 +78,9 @@ export async function loadListingForMatching(
       price: true,
       categoryId: true,
       audience: true,
+      status: true,
+      quantityAvailable: true,
+      pickupEnd: true,
       businessId: true,
       business: {
         select: {
@@ -76,6 +89,8 @@ export async function loadListingForMatching(
           latitude: true,
           longitude: true,
           ownerId: true,
+          status: true,
+          owner: { select: { status: true, role: true } },
         },
       },
       category: {
@@ -83,12 +98,19 @@ export async function loadListingForMatching(
           id: true,
           name: true,
           b2bSuitability: true,
+          isActive: true,
         },
       },
     },
   });
 
-  if (!listing) return null;
+  if (!listing || listing.status !== "ACTIVE" || listing.quantityAvailable <= 0 ||
+      listing.pickupEnd <= new Date() || listing.business.status !== "ACTIVE" ||
+      listing.business.owner.status !== "ACTIVE" || listing.business.owner.role !== "BUSINESS" ||
+      !listing.category.isActive ||
+      !hasValidCoordinates(listing.business.latitude, listing.business.longitude)) {
+    return null;
+  }
 
   return {
     ...listing,
@@ -101,7 +123,7 @@ export async function loadListingForMatching(
  * 1. Checks that the listing audience includes customers (CUSTOMERS_ONLY or EVERYONE).
  * 2. Checks user preference: notificationsEnabled must be true.
  * 3. Category preference: if user has favorite categories, the listing's category must match.
- * 4. Distance check: if user provided approximate coordinates, distance must be within notifyRadiusKm.
+ * 4. A saved coordinate pair is required; distance must be within notifyRadiusKm.
  */
 export async function findNearbyCustomers(
   listing: ListingMatchData,
@@ -116,6 +138,7 @@ export async function findNearbyCustomers(
     where: {
       role: "CUSTOMER",
       status: "ACTIVE",
+      id: { not: listing.business.ownerId },
     },
     select: {
       id: true,
@@ -140,36 +163,32 @@ export async function findNearbyCustomers(
   for (const customer of customers) {
     const pref = customer.preference;
 
-    // 1. If preference row exists and notifications are turned off, skip
-    if (pref && !pref.notificationsEnabled) {
+    // No saved location means nearby eligibility is unknown, not zero distance.
+    if (!pref || !pref.notificationsEnabled ||
+        pref.approxLatitude == null || pref.approxLongitude == null) {
       continue;
     }
 
     // 2. Favorite category filter
     // If the customer selected specific favorite categories, listing must match one of them.
     // If empty, customer receives all categories.
-    if (pref && pref.preferredCategories.length > 0) {
+    if (pref.preferredCategories.length > 0) {
       const hasCategory = pref.preferredCategories.some(
         (cat) => cat.id === listing.categoryId,
       );
       if (!hasCategory) continue;
     }
 
-    // 3. Distance check
-    const radius = pref?.notifyRadiusKm ?? 3; // Default 3 km if not set
-    let distance = 0;
-
-    if (pref?.approxLatitude != null && pref?.approxLongitude != null) {
-      distance = calculateDistanceKm(
-        shopLat,
-        shopLng,
-        pref.approxLatitude,
-        pref.approxLongitude,
-      );
-      if (distance > radius) {
-        continue;
-      }
-    }
+    // Compare the unrounded distance against the saved alert radius.
+    const radius = pref.notifyRadiusKm;
+    if (!Number.isFinite(radius) || radius <= 0) continue;
+    const distance = calculateDistanceKm(
+      shopLat,
+      shopLng,
+      pref.approxLatitude,
+      pref.approxLongitude,
+    );
+    if (distance > radius) continue;
 
     matched.push({
       userId: customer.id,
@@ -186,14 +205,15 @@ export async function findNearbyCustomers(
  * 2. Category must have b2bSuitability === 'SUITABLE' (food safety rule).
  * 3. Only active, approved businesses.
  * 4. Excludes the business that posted the listing.
- * 5. Within business radius (default 5 km).
+ * 5. Within business radius (default 5 km), measured from its shop location.
+ * Customer category/radius preferences do not apply to B2B matching.
  */
 export async function findNearbyBusinesses(
   listing: ListingMatchData,
   maxRadiusKm = 5,
 ): Promise<MatchedUser[]> {
-  // 1. Audience check
-  if (listing.audience === "CUSTOMERS_ONLY") {
+  // 1. Audience and radius checks
+  if (listing.audience === "CUSTOMERS_ONLY" || !Number.isFinite(maxRadiusKm) || maxRadiusKm <= 0) {
     return [];
   }
 
@@ -207,6 +227,7 @@ export async function findNearbyBusinesses(
     where: {
       status: "ACTIVE",
       id: { not: listing.businessId },
+      owner: { status: "ACTIVE", role: "BUSINESS" },
     },
     select: {
       id: true,
