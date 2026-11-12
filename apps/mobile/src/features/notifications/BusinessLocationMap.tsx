@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from "react-native-maps";
 import { validPickupCoordinates } from "./pickupRoute";
+import { PickupDirectionsButton } from "./PickupDirectionsButton";
 import { PickupMapStatus } from "./PickupMapStatus";
 import { usePickupRoute } from "./usePickupRoute";
 
@@ -10,7 +11,7 @@ export type { BusinessLocationMapProps } from "./BusinessLocationMap.types";
 
 // Mount this component inside the selected reservation's pickup details.
 export function BusinessLocationMap({
-  name, address, height = 240, interactive = false, ...options
+  name, address, height = 240, interactive = false, showDirections = true, ...options
 }: BusinessLocationMapProps) {
   const map = useRef<MapView>(null);
   const [ready, setReady] = useState(false);
@@ -50,6 +51,9 @@ export function BusinessLocationMap({
       </View>
       <PickupMapStatus name={name} address={address} status={state.status}
         route={state.route} message={state.message} onRetry={state.retry} />
+      {showDirections ? <PickupDirectionsButton key={state.key} reservationId={options.reservationId}
+        latitude={latitude} longitude={longitude} userLatitude={state.origin?.latitude}
+        userLongitude={state.origin?.longitude} style={styles.directions} /> : null}
     </View>
   );
 }
@@ -57,5 +61,6 @@ export function BusinessLocationMap({
 const styles = StyleSheet.create({
   container: { borderRadius: 16, overflow: "hidden", backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: "#EBE3D5", marginVertical: 10 },
   map: { width: "100%", backgroundColor: "#EDE8DD", justifyContent: "center", alignItems: "center" },
+  directions: { marginHorizontal: 14, marginBottom: 14 },
   unavailable: { padding: 20, color: "#795548" },
 });
