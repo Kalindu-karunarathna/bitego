@@ -1,4 +1,5 @@
 import { Linking, Platform } from "react-native";
+import { validPickupCoordinates } from "./pickupRoute";
 
 // Owner: Sachira. Location and routing utility helpers for business map previews and notifications.
 
@@ -57,46 +58,45 @@ export function estimateTravelTimes(distanceKm: number): TravelTimeEstimate {
   return { driveMinutes, walkMinutes };
 }
 
-/**
- * Launches the device's native mapping application (Apple Maps on iOS, Google Maps on Android),
- * or falls back to Google Maps web directions.
- */
-export async function openDirectionsInMaps({
-  latitude,
-  longitude,
-  name,
-}: {
+export type DirectionsOptions = {
   latitude: number;
   longitude: number;
-  name?: string;
-}): Promise<void> {
-  const label = name ? encodeURIComponent(name) : "Food Location";
-  const webUrl = `https://www.google.com/maps/dir/?api=1&destination=${latitude},${longitude}`;
+  userLatitude?: number;
+  userLongitude?: number;
+};
 
-  if (Platform.OS === "web") {
-    if (typeof window !== "undefined") {
-      window.open(webUrl, "_blank");
-    }
-    return;
+/** Google Maps directions, with the same driving mode and coordinates as the preview. */
+export function buildGoogleMapsDirectionsUrl({
+  latitude, longitude, userLatitude, userLongitude,
+}: DirectionsOptions): string {
+  if (!validPickupCoordinates({ latitude, longitude })) {
+    throw new Error("The shop location is unavailable.");
   }
-
-  const nativeScheme = Platform.select({
-    ios: `maps:0,0?q=${label}@${latitude},${longitude}`,
-    android: `geo:0,0?q=${latitude},${longitude}(${label})`,
-  });
-
-  if (nativeScheme) {
-    try {
-      const canOpen = await Linking.canOpenURL(nativeScheme);
-      if (canOpen) {
-        await Linking.openURL(nativeScheme);
-        return;
-      }
-    } catch {
-      // Fallback below
+  const destination = encodeURIComponent(latitude + "," + longitude);
+  let origin = "";
+  if (userLatitude !== undefined || userLongitude !== undefined) {
+    if (!validPickupCoordinates({ latitude: userLatitude, longitude: userLongitude })) {
+      throw new Error("Your location is unavailable. Please refresh it.");
     }
+    origin = "&origin=" + encodeURIComponent(userLatitude + "," + userLongitude);
   }
-
-  await Linking.openURL(webUrl);
+  // Without coordinates, Google uses current location or asks for a starting point.
+  return "https://www.google.com/maps/dir/?api=1&destination=" + destination + origin + "&travelmode=driving";
 }
 
+/** Universal HTTPS links open Google Maps with its browser fallback on iOS and Android. */
+export async function openDirectionsInMaps(options: DirectionsOptions): Promise<void> {
+  const url = buildGoogleMapsDirectionsUrl(options);
+  try {
+    if (Platform.OS === "web") {
+      if (typeof window === "undefined") throw new Error("Browser is unavailable");
+      // Same-tab navigation avoids popup blockers and preserves browser Back.
+      // Dispatch directly from the click; do not await GPS or a network request.
+      window.location.assign(url);
+      return;
+    }
+    await Linking.openURL(url);
+  } catch {
+    throw new Error("Could not open Google Maps. Please try again.");
+  }
+}
