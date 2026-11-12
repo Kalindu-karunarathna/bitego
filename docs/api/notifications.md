@@ -546,8 +546,7 @@ Owner: Sachira. The reusable component is in
 `apps/mobile/src/features/notifications/BusinessLocationMap.tsx` with a separate web implementation.
 This section implements the embedded map and its route API. It does not implement
 Nistha's reservation list, pickup-details screen, QR code, pickup actions, or status timeline.
-The Google Maps **Get directions** action is Section 5; the previous shop-search button
-is no longer rendered by this component. Its old utility is not the new navigation contract.
+The Google Maps **Get directions** action is implemented in Section 5 below. The map shows the reusable button by default; Nistha can place it in the screen footer instead.
 
 ### Integration for Nistha: selected reservation's pickup details
 
@@ -582,6 +581,7 @@ No buyer screen currently imports this component; this integration remains Nisth
 | `userLatitude`, `userLongitude` | Omitted | Supply both only if already holding current customer coordinates; otherwise request foreground GPS |
 | `height` | `240` | Map height |
 | `interactive` | `false` | Enable map gestures when desired inside the scrollable pickup screen |
+| `showDirections` | `true` | Show the built-in Google Maps button; set false when using the separate footer button |
 | `loadRoute` | Authenticated route API | Optional stable callback for tests or integration; returns validated Google route geometry, destination, metres, seconds |
 
 The customer pin is blue; the shop pin and driving route are orange. Bounds include both
@@ -688,3 +688,90 @@ After configuration and screen integration, manually verify on Android, iOS, and
 open one order's Pickup details; allow GPS; see two pins, a road route, road distance, and driving
 duration; switch orders while loading; deny GPS; simulate offline/no-route; and retry.
 Check that the route belongs to the selected order and that map bounds show both endpoints.
+
+## Google Maps Get Directions (Section 5)
+
+Owner: Sachira. Implemented in `locationUtils.ts` and `PickupDirectionsButton.tsx` within
+`apps/mobile/src/features/notifications/`. Both native and web maps include the button
+below the route details. This section does not edit Nistha's reservation or pickup screens.
+
+### Behavior
+
+- **Get directions** builds a Google Maps URL with `api=1`, the shop's coordinates as
+  `destination`, and `travelmode=driving`. If the map has customer coordinates, they are
+  sent as `origin`. Zero and negative coordinates are valid; values are not rounded.
+- The built-in button uses the route response's destination when available, matching the
+  displayed shop marker. Before a response or after a route failure, it uses the selected
+  order's shop coordinates supplied to the map. No coordinates from another order are reused.
+- If no customer coordinates are available (including denied GPS), `origin` is omitted.
+  Google Maps uses the device location when available, or lets the customer enter a starting
+  point. The app cannot promise an automatic route without either service obtaining a location.
+  A partial or invalid supplied coordinate pair is rejected rather than passed to Google.
+- Native uses `Linking.openURL` with the universal HTTPS directions URL. Google Maps opens
+  in its installed app when supported, otherwise in a browser. There are no Apple Maps or
+  `geo:` shop-search links, scheme-detection calls, or new native configuration requirements.
+- Web navigates in the same tab directly from the click, avoiding popup blocking; browser
+  Back returns to BiteGo. A missing embedded-map key does not prevent the directions button
+  from working. The standalone button also works without Google Routes being configured.
+- Invalid shop coordinates disable the action. While opening, repeated taps are ignored.
+  Launch failures appear under the button and allow another tap to retry. Changing the
+  order or coordinates resets launch/error state and ignores previous asynchronous failures.
+- No new GPS request or paid routing request runs when the button is pressed. The supplied
+  origin is a snapshot: refresh the embedded route before launching if the customer has moved.
+  Google recalculates directions and may select a different road route or duration from the preview.
+
+This uses [Google Maps URLs](https://developers.google.com/maps/documentation/urls/get-started),
+which do not require an API key. Keys for the embedded map and Routes API in Section 4 are
+separate requirements. No keys, paid requests, app configuration, or package dependencies
+were added in Section 5.
+
+### Integration for Nistha: bottom action area
+
+For the requested layout, hide the map's built-in action using `showDirections={false}`
+and mount `PickupDirectionsButton` in the existing bottom action area. Place it only for
+the currently selected, available pickup reservation. Example (adapt data names to your API):
+
+```tsx
+import { BusinessLocationMap } from "@/features/notifications/BusinessLocationMap";
+import { PickupDirectionsButton } from "@/features/notifications/PickupDirectionsButton";
+
+// Map under the selected order's pickup details:
+<BusinessLocationMap
+  key={reservation.id}
+  reservationId={reservation.id}
+  latitude={reservation.listing.business.latitude}
+  longitude={reservation.listing.business.longitude}
+  name={reservation.listing.business.name}
+  showDirections={false}
+/>
+
+// In the screen's existing bottom action area:
+<PickupDirectionsButton
+  reservationId={reservation.id}
+  latitude={reservation.listing.business.latitude}
+  longitude={reservation.listing.business.longitude}
+/>
+```
+
+The footer example leaves origin selection to Google Maps. To specify an existing current
+customer position, pass both `userLatitude` and `userLongitude`. No separate GPS hook or
+second route request is needed just for the footer button. Pass `disabled` when pickup is
+unavailable and `style` to fit the existing footer layout. `reservationId` resets local UI
+state on order changes; it is not sent to Google and does not perform an authorization check.
+
+### Validation
+
+```powershell
+node --test apps/mobile/src/features/notifications/locationUtils.test.mjs apps/mobile/src/features/notifications/PickupDirectionsButton.test.mjs
+npm run typecheck -w @bitego/mobile
+```
+
+The new tests cover directions URLs, coordinate validation, native/browser dispatch, launch
+failure handling, rapid taps, order changes, the map's authoritative destination, and the web
+fallback without a map key. React/native/OS boundaries are mocked; they do not verify an actual
+installed Google Maps app, device associations, or rendered native UI.
+
+After Nistha integrates the screen, test on Android and iOS with and without Google Maps
+installed, and on Web. Confirm the expected start/shop endpoints; test denied GPS, double taps,
+launch failure/retry, switching orders, and browser Back. Verify the button is at the bottom of
+the pickup screen and is not duplicated under the map when `showDirections={false}`.
