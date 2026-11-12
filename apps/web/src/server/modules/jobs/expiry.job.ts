@@ -11,16 +11,12 @@ export type ExpiryJobResult = {
 };
 
 /**
- * Runs the expiry job:
- * 1. Finds all listings where pickupEnd has passed and status is ACTIVE or SOLD_OUT.
- *    Marks them EXPIRED.
- * 2. Finds all reservations where status is CONFIRMED and the listing's pickupEnd has passed.
- *    Marks them EXPIRED (no-show) and notifies the buyer.
+ * Expires past-due ACTIVE/SOLD_OUT listings and CONFIRMED reservations.
+ * Only reservations changed by this run are counted and notified.
  */
 export async function runExpiryJob(): Promise<ExpiryJobResult> {
   const now = new Date();
 
-  // 1. Expire past-due listings
   const listingsResult = await prisma.foodListing.updateMany({
     where: {
       pickupEnd: { lte: now },
@@ -31,66 +27,44 @@ export async function runExpiryJob(): Promise<ExpiryJobResult> {
     },
   });
 
-  // 2. Find confirmed reservations on listings whose pickupEnd has passed
-  const expiredReservations = await prisma.reservation.findMany({
+  // Check eligibility in the write itself, so a pickup/cancellation that wins
+  // the race is preserved. RETURNING identifies exactly the rows this run changed;
+  // another expiry run cannot claim those rows again.
+  const expiredReservations = await prisma.reservation.updateManyAndReturn({
     where: {
       status: "CONFIRMED",
       listing: {
         pickupEnd: { lte: now },
       },
     },
+    data: {
+      status: "EXPIRED",
+    },
     select: {
       id: true,
       buyerId: true,
       listingId: true,
-      listing: {
-        select: {
-          title: true,
-        },
-      },
     },
   });
 
-  let expiredReservationsCount = 0;
-
-  if (expiredReservations.length > 0) {
-    const reservationIds = expiredReservations.map((r) => r.id);
-
-    // Atomically mark all expired reservations
-    const updateResult = await prisma.reservation.updateMany({
-      where: {
-        id: { in: reservationIds },
-      },
-      data: {
-        status: "EXPIRED",
-      },
-    });
-
-    expiredReservationsCount = updateResult.count;
-
-    // Notify each affected buyer (matching the Figma "Reservation expired" alert)
-    const notifications = expiredReservations.map(async (r) => {
-      try {
-        await notify({
-          userId: r.buyerId,
-          type: "RESERVATION_CANCELLED",
-          title: "Reservation expired",
-          message: `Your reservation has expired because the pickup deadline passed.`,
-          listingId: r.listingId,
-          reservationId: r.id,
-        });
-      } catch (err) {
-        console.error(`[jobs] Failed to notify buyer ${r.buyerId} for expired reservation ${r.id}:`, err);
-      }
-    });
-
-    await Promise.allSettled(notifications);
-  }
+  await Promise.allSettled(expiredReservations.map(async (reservation) => {
+    try {
+      await notify({
+        userId: reservation.buyerId,
+        type: "RESERVATION_CANCELLED",
+        title: "Reservation expired",
+        message: "Your reservation has expired because the pickup deadline passed.",
+        listingId: reservation.listingId,
+        reservationId: reservation.id,
+      });
+    } catch (err) {
+      console.error(`[jobs] Failed to notify buyer ${reservation.buyerId} for expired reservation ${reservation.id}:`, err);
+    }
+  }));
 
   return {
     expiredListingsCount: listingsResult.count,
-    expiredReservationsCount,
+    expiredReservationsCount: expiredReservations.length,
     timestamp: now.toISOString(),
   };
 }
-
