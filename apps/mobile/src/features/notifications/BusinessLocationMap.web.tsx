@@ -1,169 +1,65 @@
-import React from "react";
-import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
-import {
-  calculateDistanceKm,
-  estimateTravelTimes,
-  formatDistance,
-  openDirectionsInMaps,
-  type TravelTimeEstimate,
-} from "./locationUtils";
-import type { BusinessLocationMapProps } from "./BusinessLocationMap";
+import { useCallback, useEffect, useMemo, useRef } from "react";
+import { StyleSheet, Text, View } from "react-native";
+import type { BusinessLocationMapProps } from "./BusinessLocationMap.types";
+import { PickupMapStatus } from "./PickupMapStatus";
+import { createPickupMapDocument } from "./pickupMapDocument";
+import { validPickupCoordinates } from "./pickupRoute";
+import { usePickupRoute } from "./usePickupRoute";
+export type { BusinessLocationMapProps } from "./BusinessLocationMap.types";
 
-// Owner: Sachira. Web-specific fallback for BusinessLocationMap.
-// Renders an embedded interactive map on Web without depending on native react-native-maps.
+// Only a browser-restricted Maps JavaScript key belongs in this public variable.
+// The Google Routes server key must never be passed to the app or this iframe.
+export function BusinessLocationMap(props: BusinessLocationMapProps) {
+  const apiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_WEB_API_KEY?.trim();
+  if (!apiKey) return (
+    <View style={styles.container}>
+      <Text style={styles.unavailable}>The pickup map is temporarily unavailable.</Text>
+    </View>
+  );
+  return <ConfiguredPickupMap {...props} apiKey={apiKey} />;
+}
 
-export function BusinessLocationMap({
-  latitude,
-  longitude,
-  name,
-  address,
-  userLatitude,
-  userLongitude,
-  height = 200,
-}: BusinessLocationMapProps) {
-  const hasUserCoords = userLatitude !== undefined && userLongitude !== undefined;
-  const distanceKm = hasUserCoords
-    ? calculateDistanceKm(userLatitude, userLongitude, latitude, longitude)
-    : null;
+function ConfiguredPickupMap({
+  apiKey, name, address, height = 240, interactive = false, ...options
+}: BusinessLocationMapProps & { apiKey: string }) {
+  const state = usePickupRoute(options);
+  const frame = useRef<HTMLIFrameElement>(null);
+  const { latitude, longitude } = state.route?.destination ?? options;
+  const validShop = validPickupCoordinates({ latitude, longitude });
+  const mapId = process.env.EXPO_PUBLIC_GOOGLE_MAPS_WEB_MAP_ID?.trim() || "DEMO_MAP_ID";
+  const source = useMemo(() => validShop ? createPickupMapDocument({
+    apiKey, mapId, destination: { latitude: options.latitude, longitude: options.longitude }, origin: null,
+    coordinates: [], name, interactive,
+  }) : "", [apiKey, mapId, options.latitude, options.longitude, name, interactive, validShop]);
 
-  const travelTimes: TravelTimeEstimate | null = distanceKm
-    ? estimateTravelTimes(distanceKm)
-    : null;
-
-  const handleOpenDirections = () => {
-    void openDirectionsInMaps({
-      latitude,
-      longitude,
-      name,
-    });
-  };
-
-  const embedUrl = `https://maps.google.com/maps?q=${latitude},${longitude}&z=15&output=embed`;
+  const updateMap = useCallback(() => {
+    frame.current?.contentWindow?.postMessage({
+      type: "bitego-pickup-map", payload: {
+        destination: { latitude, longitude }, origin: state.origin,
+        coordinates: state.route?.coordinates ?? [],
+      },
+    }, window.location.origin);
+  }, [latitude, longitude, state.origin, state.route]);
+  useEffect(updateMap, [updateMap]);
 
   return (
     <View style={styles.container}>
-      {/* Web Map Embed */}
-      <View style={[styles.mapWrapper, { height }]}>
-        <iframe
-          title={name}
-          src={embedUrl}
-          style={{
-            width: "100%",
-            height: "100%",
-            border: "none",
-          }}
-          loading="lazy"
-        />
+      <View style={[styles.map, { height }]}>
+        {validShop ? <iframe ref={frame} onLoad={updateMap} title={name + " pickup route"} srcDoc={source}
+          // Reload an errored map when the user explicitly retries the route.
+          key={state.key} sandbox="allow-scripts allow-same-origin"
+          referrerPolicy="strict-origin-when-cross-origin"
+          style={{ width: "100%", height: "100%", border: "none" }} />
+          : <Text style={styles.unavailable}>The shop location is unavailable.</Text>}
       </View>
-
-      {/* Info and Actions Card */}
-      <View style={styles.infoCard}>
-        <View style={styles.headerRow}>
-          <Text style={styles.shopIcon}>🏪</Text>
-          <View style={styles.titleContainer}>
-            <Text style={styles.shopName} numberOfLines={1}>
-              {name}
-            </Text>
-            {address ? (
-              <Text style={styles.addressText} numberOfLines={1}>
-                {address}
-              </Text>
-            ) : null}
-          </View>
-        </View>
-
-        {/* Distance & ETA Row */}
-        {distanceKm !== null && travelTimes !== null && (
-          <View style={styles.metaRow}>
-            <Text style={styles.metaPill}>📍 {formatDistance(distanceKm)} away</Text>
-            <Text style={styles.metaPill}>🚗 ~{travelTimes.driveMinutes} min</Text>
-            <Text style={styles.metaPill}>🚶 ~{travelTimes.walkMinutes} min</Text>
-          </View>
-        )}
-
-        {/* Directions Button */}
-        <TouchableOpacity
-          style={styles.directionsButton}
-          onPress={handleOpenDirections}
-          activeOpacity={0.85}
-        >
-          <Text style={styles.directionsButtonText}>🗺️ Open in Google Maps</Text>
-        </TouchableOpacity>
-      </View>
+      <PickupMapStatus name={name} address={address} status={state.status}
+        route={state.route} message={state.message} onRetry={state.retry} />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    borderRadius: 16,
-    overflow: "hidden",
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: "#EBE3D5",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 4,
-    elevation: 2,
-    marginVertical: 10,
-  },
-  mapWrapper: {
-    width: "100%",
-    backgroundColor: "#EDE8DD",
-  },
-  infoCard: {
-    padding: 14,
-    backgroundColor: "#FFFFFF",
-  },
-  headerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 8,
-  },
-  shopIcon: {
-    fontSize: 22,
-    marginRight: 10,
-  },
-  titleContainer: {
-    flex: 1,
-  },
-  shopName: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#2C1810",
-  },
-  addressText: {
-    fontSize: 13,
-    color: "#795548",
-    marginTop: 2,
-  },
-  metaRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 6,
-    marginBottom: 12,
-  },
-  metaPill: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#E65100",
-    backgroundColor: "#FFF3E0",
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-  },
-  directionsButton: {
-    backgroundColor: "#E65100",
-    borderRadius: 10,
-    paddingVertical: 10,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  directionsButtonText: {
-    color: "#FFFFFF",
-    fontSize: 14,
-    fontWeight: "600",
-  },
+  container: { borderRadius: 16, overflow: "hidden", backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: "#EBE3D5", marginVertical: 10 },
+  map: { width: "100%", backgroundColor: "#EDE8DD", justifyContent: "center", alignItems: "center" },
+  unavailable: { padding: 20, color: "#795548" },
 });
-
