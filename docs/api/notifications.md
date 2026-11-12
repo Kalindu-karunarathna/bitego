@@ -238,6 +238,33 @@ Create or update preferences. All fields are optional — only the ones you send
 
 ---
 
+## Nearby listing matching
+
+`onListingCreated(listingId)` loads the listing and checks eligibility before finding recipients:
+
+- The listing must be `ACTIVE`, have quantity available, and have a pickup deadline strictly later than the eligibility check. A future pickup start is allowed.
+- Its business must be `ACTIVE`, its owner must be an active `BUSINESS` account, and its category must be active. Shop coordinates must be valid.
+- Customers must have an active customer account, enabled notifications, and a complete valid saved approximate location. Missing preferences or a missing/cleared location means no nearby-listing alerts; there is no default geographic area. Empty category preferences accept all active categories; otherwise the category must match.
+- Customers receive `CUSTOMERS_ONLY` and `EVERYONE` listings within their saved alert radius. The selling owner is excluded.
+- B2B recipients must be other active businesses with active business owners and notifications enabled (enabled by default when no preference row exists). They receive `BUSINESSES_ONLY` and `EVERYONE` listings only when the category is `SUITABLE`.
+- B2B matching measures from the registered shop location with a default 5 km radius. Customer-style favorite categories, approximate location, and saved radius do not apply to B2B matching.
+
+Distance is calculated with Haversine and compared without rounding. Invalid coordinates cannot match. Customer distances remain approximate because saved location coordinates are rounded for privacy. This is straight-line proximity, not driving distance or pickup navigation.
+
+Eligibility is checked from the listing snapshot; matching does not lock the listing through notification delivery. Recipients are deduplicated within one invocation. Repeated/concurrent invocations are not yet deduplicated across runs. This matching guard does not replace reservation-time authorization and B2B suitability checks in the buyer module.
+
+Kajanika still needs to call the hook after listing creation commits successfully. That integration is owned by the seller module.
+
+Run the matching regression tests from the repository root:
+
+```powershell
+node --test apps/web/src/server/modules/matching/matching.service.test.mjs apps/web/src/server/modules/matching/matching.test.mjs
+```
+
+These tests run the actual service/hook code with mocked database or matching/notification dependencies; no database writes or pushes occur. Live database and seller-flow integration still require separate verification.
+
+---
+
 ## Scheduled Background Jobs (Cron)
 
 These endpoints run periodically (e.g. via Vercel Cron, GitHub Actions, or scheduled worker) to maintain system consistency.
