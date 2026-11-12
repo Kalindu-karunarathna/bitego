@@ -251,7 +251,7 @@ Create or update preferences. All fields are optional — only the ones you send
 
 Distance is calculated with Haversine and compared without rounding. Invalid coordinates cannot match. Customer distances remain approximate because saved location coordinates are rounded for privacy. This is straight-line proximity, not driving distance or pickup navigation.
 
-Eligibility is checked from the listing snapshot; matching does not lock the listing through notification delivery. Recipients are deduplicated within one invocation. Repeated/concurrent invocations are not yet deduplicated across runs. This matching guard does not replace reservation-time authorization and B2B suitability checks in the buyer module.
+Eligibility is checked from the listing snapshot; matching does not lock the listing through notification delivery. Recipients are deduplicated within each invocation and across repeated/concurrent invocations by the shared notification writer (Section 6). This matching guard does not replace reservation-time authorization and B2B suitability checks in the buyer module.
 
 Kajanika still needs to call the hook after listing creation commits successfully. That integration is owned by the seller module.
 
@@ -312,7 +312,7 @@ Scans for time-sensitive events and sends reminder notifications:
 1. **Nearing Expiry**: Finds active listings expiring within 1 hour and sends `LISTING_NEARING_EXPIRY` to the seller.
 2. **Pickup Deadline**: Finds confirmed reservations expiring within 30 minutes and sends `PICKUP_REMINDER` to the customer.
 
-Deduplicated so recurring runs (e.g. every 5–15 minutes) only notify once per listing or reservation.
+Repeated and overlapping runs notify once per recipient/type/listing or recipient/type/reservation while the notification record is retained. Counts include only newly saved notifications, excluding duplicates, opted-out users, and failed inserts (Section 6).
 
 **200 response**
 
@@ -524,8 +524,8 @@ The mobile app automatically registers the device's Expo push token upon mountin
 ### Overview
 Whenever `notify()` is invoked (by reservation confirmation, new nearby listing matching, reminder jobs, or business verification), it:
 1. Checks the recipient's master notification toggle (`UserPreference.notificationsEnabled`).
-2. Persists the in-app notification row in the PostgreSQL database.
-3. Automatically dispatches asynchronous, fire-and-forget push notifications via `sendPush(userId, payload)` to all active devices registered by that user.
+2. Persists the in-app notification row, suppressing repeated matching/reminder events through the Section 6 identity policy.
+3. Only after creating a new row, dispatches asynchronous, fire-and-forget push notifications via `sendPush(userId, payload)` to all active devices registered by that user.
 
 ### Stale Token Pruning (`DeviceNotRegistered`)
 When a user uninstalls the mobile app, Expo's Push API returns an error ticket with:
@@ -775,3 +775,95 @@ After Nistha integrates the screen, test on Android and iOS with and without Goo
 installed, and on Web. Confirm the expected start/shop endpoints; test denied GPS, double taps,
 launch failure/retry, switching orders, and browser Back. Verify the button is at the bottom of
 the pickup screen and is not duplicated under the map when `showDirections={false}`.
+
+## Duplicate Notification Prevention (Section 6)
+
+Owner: Sachira. Covers repeated and overlapping listing matching, seller expiry reminders,
+and buyer pickup reminders. The public `notify(input): Promise<void>` contract is unchanged;
+`onListingCreated` continues to use it. The matching algorithm and recipient eligibility rules
+from Section 3 are unchanged.
+
+### Event identity policy
+
+| Type | Once per | Required reference |
+| --- | --- | --- |
+| `NEW_NEARBY_LISTING` | Recipient + type + listing | `listingId` |
+| `LISTING_NEARING_EXPIRY` | Recipient + type + listing | `listingId` |
+| `PICKUP_REMINDER` | Recipient + type + reservation | `reservationId` |
+
+Different recipients, listings, reservations, and notification types get separate identities.
+Changing message text, price, title, deadline, or read state does not create a new event.
+Two reservations for the same listing still receive separate pickup reminders. Other types
+retain their existing behavior: repeated business reviews or reservation lifecycle operations
+must not be silently suppressed using an identity that cannot distinguish legitimate new events.
+Expiry-job duplication is already prevented by the conditional state transition in Section 2.
+
+`notification-identity.ts` derives a stable UUID v5 from a fixed namespace and a JSON array
+of recipient UUID, notification type, reference field, and referenced UUID. UUIDs must use
+canonical hyphenated spelling; upper case is normalized. The namespace and encoding are
+permanent and covered by a fixed expected-ID test. Do not change them between deployments.
+
+### Persistence and concurrent calls
+
+1. Respect the recipient's master notification preference. Disabled recipients get no row
+   or push. A missing preference row keeps the existing default of enabled.
+2. Check existing rows for the event, including old random-ID rows and already-read rows.
+   This preserves deduplication for notifications saved before Section 6.
+3. Insert a new notification with its stable ID. The existing `Notification.id` primary key
+   provides the atomic guard when concurrent calls both pass the initial lookup.
+4. A duplicate insert raises Prisma 7 `P2002`. Verify that the expected ID and event actually
+   exist before treating the error as a duplicate. Other database failures are propagated.
+5. Only a successful new insert calls `sendPush`. Duplicate calls return without another push.
+
+There is no in-memory duplicate cache, new schema field, migration, raw SQL, or dependency.
+Separate server instances calculate the same ID. This uses the project's existing Prisma 7
+[unique-constraint error behavior](https://www.prisma.io/docs/orm/v7/reference/error-reference#p2002).
+
+### Reminder counts
+
+`notifyOnce(input): Promise<boolean>` is an additional helper for the three types above.
+It returns `true` only for a newly saved notification and `false` for a duplicate or opted-out
+recipient. Required entity IDs are enforced in its TypeScript input and at runtime.
+Unsupported types and missing identities fail instead of silently creating repeatable records.
+
+`runReminderJob()` uses this result for `nearingExpiryListingsNotified` and
+`pickupRemindersNotified`. These are **new in-app notification counts**, not confirmed push
+receipts. The job no longer performs an unsafe separate check followed by an ordinary insert.
+Failure for one recipient is logged and does not stop other candidates. A later retry can create
+an event whose insert previously failed, without resending successfully saved events.
+
+### Boundaries and rollout
+
+- All matching/reminder producers must use the updated `notify` or `notifyOnce`. Direct
+  database inserts and old server versions still writing random IDs bypass the new guard;
+  complete the deployment across all workers before relying on concurrent-run protection.
+- Existing duplicate records are not deleted or merged. They suppress further repeats.
+- The notification row is the durable marker. Physically deleting it removes that protection;
+  marking it read does not. A separate permanent event ledger would require schema-owner work.
+- Push remains best-effort and fire-and-forget. A crash after saving but before dispatch, or
+  an Expo failure, can leave an in-app notification without a delivered push. A retry does not
+  replay that push. This prevents repeated application dispatch; it is not an exactly-once
+  delivery guarantee from Expo or the device. Durable push retries need a separate outbox.
+- Eligibility and preferences remain snapshots. This section does not lock the listing or
+  reservation state through delivery or change the reminder time windows.
+
+### Verification
+
+Run from the repository root:
+
+```powershell
+node --test apps/web/src/server/modules/notifications/notification-identity.test.mjs apps/web/src/server/modules/notifications/notify.test.mjs apps/web/src/server/modules/jobs/reminder.job.test.mjs apps/web/src/server/modules/matching/matching.delivery.test.mjs
+npm run typecheck -w @bitego/web
+```
+
+Tests execute the actual identity helper, notification writer, matching hook, and reminder job.
+Database and push boundaries are replaced by an adapter that allows concurrent reads and
+models atomic primary-key rejection. They cover repeated/concurrent calls, separate writer
+instances, old/read rows, opt-out, different reservations, partial failures, unique-error
+verification, push failures, accurate counts, and reminder-window boundaries. Existing
+matching eligibility and expiry-race tests were also rerun.
+
+No live database was changed and no real push was sent. Before deployment, run two simultaneous
+matching/reminder requests against an isolated test database with test recipients and confirm
+one retained notification per event and one application push dispatch. This remains an
+integration check for the team's configured PostgreSQL/Prisma environment.
