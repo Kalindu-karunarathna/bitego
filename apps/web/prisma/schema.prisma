@@ -1,0 +1,458 @@
+// BiteGo database schema (PostgreSQL on Supabase).
+// Prisma model names are PascalCase; tables and columns are snake_case in the database,
+// so raw SQL (nearby search, atomic reservation) stays readable.
+//
+// Things Prisma cannot express are added as SQL in the second migration:
+//   - CHECK constraints (quantities, prices, pickup window, rating)
+//   - one active reservation per buyer per listing (partial unique index)
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  // The connection URL lives in prisma.config.ts (Prisma 7), not here.
+}
+
+// ───────────────────────────── Enums ─────────────────────────────
+
+enum Role {
+  CUSTOMER
+  BUSINESS
+  ADMIN
+
+  @@map("role")
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  BLOCKED
+
+  @@map("user_status")
+}
+
+enum BusinessType {
+  RESTAURANT
+  CAFE
+  BAKERY
+  SUPERMARKET
+  CANTEEN
+  HOTEL
+  SHOP
+  OTHER
+
+  @@map("business_type")
+}
+
+// PENDING = registered, waiting for admin approval. Only ACTIVE businesses can sell or buy.
+enum BusinessStatus {
+  PENDING
+  ACTIVE
+  REJECTED
+  SUSPENDED
+
+  @@map("business_status")
+}
+
+enum VerificationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+
+  @@map("verification_status")
+}
+
+// Food-safety guard for B2B (proposal section 6.6). Set per category by the admin.
+enum B2BSuitability {
+  SUITABLE
+  RESTRICTED
+  UNSUITABLE
+
+  @@map("b2b_suitability")
+}
+
+// Who may see and reserve a listing. Chosen by the business when posting.
+enum ListingAudience {
+  CUSTOMERS_ONLY
+  BUSINESSES_ONLY
+  EVERYONE
+
+  @@map("listing_audience")
+}
+
+// ACTIVE     -> quantity left and pickup window open
+// SOLD_OUT   -> all quantity reserved
+// COMPLETED  -> all quantity reserved and every reservation picked up
+// EXPIRED    -> pickup window ended
+// CANCELLED  -> cancelled by the business or an admin
+enum ListingStatus {
+  ACTIVE
+  SOLD_OUT
+  COMPLETED
+  EXPIRED
+  CANCELLED
+
+  @@map("listing_status")
+}
+
+enum QuantityUnit {
+  PORTION
+  PIECE
+  PACK
+  KG
+
+  @@map("quantity_unit")
+}
+
+// CONFIRMED -> instantly, when the atomic reservation succeeds
+// PICKED_UP -> seller entered the correct pickup code
+// CANCELLED -> cancelled before pickup (quantity goes back to the listing)
+// EXPIRED   -> not collected before the pickup window ended (no-show)
+enum ReservationStatus {
+  CONFIRMED
+  PICKED_UP
+  CANCELLED
+  EXPIRED
+
+  @@map("reservation_status")
+}
+
+enum NotificationType {
+  NEW_NEARBY_LISTING
+  NEW_RESERVATION
+  RESERVATION_CONFIRMED
+  RESERVATION_CANCELLED
+  LISTING_NEARING_EXPIRY
+  LISTING_SOLD_OUT
+  PICKUP_REMINDER
+  BUSINESS_APPROVED
+  BUSINESS_REJECTED
+
+  @@map("notification_type")
+}
+
+enum DevicePlatform {
+  ANDROID
+  IOS
+
+  @@map("device_platform")
+}
+
+enum ReportType {
+  INAPPROPRIATE
+  SPAM
+  FAKE
+  QUALITY_SAFETY
+  OTHER
+
+  @@map("report_type")
+}
+
+enum ReportStatus {
+  PENDING
+  REVIEWED
+  RESOLVED
+  REJECTED
+
+  @@map("report_status")
+}
+
+// ───────────────────────────── Users ─────────────────────────────
+
+// "id" is the Supabase Auth user id (no default: we copy it from the auth user).
+// Passwords are stored by Supabase Auth, never in this table.
+model User {
+  id                String     @id @db.Uuid
+  email             String     @unique
+  phone             String?    @unique
+  fullName          String     @map("full_name")
+  role              Role       @default(CUSTOMER)
+  status            UserStatus @default(ACTIVE)
+  profilePictureUrl String?    @map("profile_picture_url")
+  createdAt         DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  business             Business?
+  preference           UserPreference?
+  deviceTokens         DeviceToken[]
+  reservations         Reservation[]
+  notifications        Notification[]
+  reviews              Review[]
+  reportsFiled         Report[]               @relation("ReportReporter")
+  reportsReviewed      Report[]               @relation("ReportReviewer")
+  verificationsHandled BusinessVerification[] @relation("VerificationReviewer")
+  auditLogs            AuditLog[]
+
+  @@index([role, status])
+  @@map("users")
+}
+
+// Matching and "new nearby surplus" notifications.
+// The location is approximate (rounded by the API to ~1 km) and optional.
+model UserPreference {
+  userId               String    @id @map("user_id") @db.Uuid
+  notifyRadiusKm       Int       @default(3) @map("notify_radius_km")
+  notificationsEnabled Boolean   @default(true) @map("notifications_enabled")
+  approxLatitude       Float?    @map("approx_latitude")
+  approxLongitude      Float?    @map("approx_longitude")
+  locationUpdatedAt    DateTime? @map("location_updated_at") @db.Timestamptz(6)
+  updatedAt            DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user                User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  preferredCategories Category[]
+
+  @@index([approxLatitude, approxLongitude])
+  @@map("user_preferences")
+}
+
+// Expo push token of a user's device. One user can have several devices.
+model DeviceToken {
+  id         String         @id @default(uuid()) @db.Uuid
+  userId     String         @map("user_id") @db.Uuid
+  token      String         @unique
+  platform   DevicePlatform
+  createdAt  DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  lastSeenAt DateTime       @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("device_tokens")
+}
+
+// ───────────────────────────── Businesses ─────────────────────────────
+
+// One business per user (a user with role BUSINESS).
+// latitude/longitude are the shop location, set once at registration (GPS + map pin).
+model Business {
+  id             String         @id @default(uuid()) @db.Uuid
+  ownerId        String         @unique @map("owner_id") @db.Uuid
+  name           String
+  type           BusinessType
+  registrationNo String?        @unique @map("registration_no")
+  description    String?
+  contactNo      String         @map("contact_no")
+  email          String?
+  logoUrl        String?        @map("logo_url")
+  addressLine    String         @map("address_line")
+  city           String
+  district       String?
+  latitude       Float
+  longitude      Float
+  status         BusinessStatus @default(PENDING)
+  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  owner         User                   @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  verifications BusinessVerification[]
+  listings      FoodListing[]
+  reviews       Review[]
+
+  @@index([status])
+  @@index([latitude, longitude])
+  @@map("businesses")
+}
+
+// History of approval requests. A rejected business can resubmit, creating a new row.
+model BusinessVerification {
+  id           String             @id @default(uuid()) @db.Uuid
+  businessId   String             @map("business_id") @db.Uuid
+  status       VerificationStatus @default(PENDING)
+  documentUrl  String?            @map("document_url")
+  submittedAt  DateTime           @default(now()) @map("submitted_at") @db.Timestamptz(6)
+  reviewedById String?            @map("reviewed_by_id") @db.Uuid
+  reviewedAt   DateTime?          @map("reviewed_at") @db.Timestamptz(6)
+  remarks      String?
+
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  reviewedBy User?    @relation("VerificationReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([businessId])
+  @@index([status, submittedAt])
+  @@map("business_verifications")
+}
+
+// ───────────────────────────── Food listings ─────────────────────────────
+
+model Category {
+  id             String         @id @default(uuid()) @db.Uuid
+  name           String         @unique
+  description    String?
+  iconUrl        String?        @map("icon_url")
+  isActive       Boolean        @default(true) @map("is_active")
+  b2bSuitability B2BSuitability @default(SUITABLE) @map("b2b_suitability")
+  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  listings    FoodListing[]
+  preferredBy UserPreference[]
+
+  @@map("categories")
+}
+
+// The location of a listing is the location of its business.
+// Expiry = pickupEnd. quantityAvailable is decreased atomically when someone reserves.
+model FoodListing {
+  id                String          @id @default(uuid()) @db.Uuid
+  businessId        String          @map("business_id") @db.Uuid
+  categoryId        String          @map("category_id") @db.Uuid
+  title             String
+  description       String?
+  quantityTotal     Int             @map("quantity_total")
+  quantityAvailable Int             @map("quantity_available")
+  unit              QuantityUnit    @default(PORTION)
+  originalPrice     Decimal         @map("original_price") @db.Decimal(10, 2)
+  price             Decimal         @db.Decimal(10, 2)
+  pickupStart       DateTime        @map("pickup_start") @db.Timestamptz(6)
+  pickupEnd         DateTime        @map("pickup_end") @db.Timestamptz(6)
+  pickupNote        String?         @map("pickup_note")
+  audience          ListingAudience @default(EVERYONE)
+  status            ListingStatus   @default(ACTIVE)
+  createdAt         DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  business      Business       @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  category      Category       @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  images        ListingImage[]
+  reservations  Reservation[]
+  reports       Report[]
+  notifications Notification[]
+
+  @@index([status, pickupEnd])
+  @@index([businessId, status])
+  @@index([categoryId, status])
+  @@index([audience, status])
+  @@map("food_listings")
+}
+
+// Photos are taken with the phone camera when the listing is posted.
+model ListingImage {
+  id           String   @id @default(uuid()) @db.Uuid
+  listingId    String   @map("listing_id") @db.Uuid
+  imageUrl     String   @map("image_url")
+  isPrimary    Boolean  @default(false) @map("is_primary")
+  displayOrder Int      @default(0) @map("display_order")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  listing FoodListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@index([listingId])
+  @@map("listing_images")
+}
+
+// ───────────────────────────── Reservations ─────────────────────────────
+
+// Payment is cash on pickup, so there is no payment table.
+// Whether it was B2B is known from the buyer's role (BUSINESS).
+// unitPrice and totalPrice are copied from the listing at booking time.
+// pickupCode: short random code shown by the buyer; the seller enters it to confirm pickup.
+model Reservation {
+  id           String            @id @default(uuid()) @db.Uuid
+  listingId    String            @map("listing_id") @db.Uuid
+  buyerId      String            @map("buyer_id") @db.Uuid
+  quantity     Int
+  unitPrice    Decimal           @map("unit_price") @db.Decimal(10, 2)
+  totalPrice   Decimal           @map("total_price") @db.Decimal(10, 2)
+  status       ReservationStatus @default(CONFIRMED)
+  pickupCode   String            @unique @map("pickup_code")
+  pickedUpAt   DateTime?         @map("picked_up_at") @db.Timestamptz(6)
+  cancelledAt  DateTime?         @map("cancelled_at") @db.Timestamptz(6)
+  cancelReason String?           @map("cancel_reason")
+  createdAt    DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  listing       FoodListing    @relation(fields: [listingId], references: [id], onDelete: Restrict)
+  buyer         User           @relation(fields: [buyerId], references: [id], onDelete: Restrict)
+  review        Review?
+  notifications Notification[]
+
+  @@index([buyerId, status])
+  @@index([listingId, status])
+  @@map("reservations")
+}
+
+// ───────────────────────────── Notifications ─────────────────────────────
+
+// In-app notification history. A push message is sent for each one (Expo push).
+// Text must not contain unnecessary personal information.
+model Notification {
+  id            String           @id @default(uuid()) @db.Uuid
+  userId        String           @map("user_id") @db.Uuid
+  type          NotificationType
+  title         String
+  message       String
+  listingId     String?          @map("listing_id") @db.Uuid
+  reservationId String?          @map("reservation_id") @db.Uuid
+  isRead        Boolean          @default(false) @map("is_read")
+  createdAt     DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  listing     FoodListing? @relation(fields: [listingId], references: [id], onDelete: SetNull)
+  reservation Reservation? @relation(fields: [reservationId], references: [id], onDelete: SetNull)
+
+  @@index([userId, isRead, createdAt])
+  @@map("notifications")
+}
+
+// ───────────────────────────── Feedback, reports, audit ─────────────────────────────
+
+// One review per picked-up reservation. The buyer rates the selling business.
+model Review {
+  id            String   @id @default(uuid()) @db.Uuid
+  reservationId String   @unique @map("reservation_id") @db.Uuid
+  reviewerId    String   @map("reviewer_id") @db.Uuid
+  businessId    String   @map("business_id") @db.Uuid
+  rating        Int
+  comment       String?
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  reservation Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  reviewer    User        @relation(fields: [reviewerId], references: [id], onDelete: Restrict)
+  business    Business    @relation(fields: [businessId], references: [id], onDelete: Restrict)
+
+  @@index([businessId])
+  @@map("reviews")
+}
+
+model Report {
+  id           String       @id @default(uuid()) @db.Uuid
+  reporterId   String       @map("reporter_id") @db.Uuid
+  listingId    String       @map("listing_id") @db.Uuid
+  type         ReportType
+  description  String?
+  status       ReportStatus @default(PENDING)
+  reviewedById String?      @map("reviewed_by_id") @db.Uuid
+  adminNote    String?      @map("admin_note")
+  reviewedAt   DateTime?    @map("reviewed_at") @db.Timestamptz(6)
+  createdAt    DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  reporter   User        @relation("ReportReporter", fields: [reporterId], references: [id], onDelete: Restrict)
+  reviewedBy User?       @relation("ReportReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  listing    FoodListing @relation(fields: [listingId], references: [id], onDelete: Restrict)
+
+  @@index([status, createdAt])
+  @@index([listingId])
+  @@map("reports")
+}
+
+// Important admin and transaction events (business approved, listing cancelled,
+// reservation picked up, user blocked ...). Also a source for activity analytics.
+model AuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  actorId    String?  @map("actor_id") @db.Uuid
+  action     String
+  entityType String   @map("entity_type")
+  entityId   String?  @map("entity_id")
+  metadata   Json?
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId])
+  @@index([actorId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
