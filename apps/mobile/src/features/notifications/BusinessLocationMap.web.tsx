@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import type { BusinessLocationMapProps } from "./BusinessLocationMap.types";
+import { PickupDirectionsButton } from "./PickupDirectionsButton";
 import { PickupMapStatus } from "./PickupMapStatus";
 import { createPickupMapDocument } from "./pickupMapDocument";
 import { validPickupCoordinates } from "./pickupRoute";
@@ -14,13 +15,16 @@ export function BusinessLocationMap(props: BusinessLocationMapProps) {
   if (!apiKey) return (
     <View style={styles.container}>
       <Text style={styles.unavailable}>The pickup map is temporarily unavailable.</Text>
+      {props.showDirections !== false ? <PickupDirectionsButton reservationId={props.reservationId}
+        latitude={props.latitude} longitude={props.longitude} userLatitude={props.userLatitude}
+        userLongitude={props.userLongitude} style={styles.directions} /> : null}
     </View>
   );
   return <ConfiguredPickupMap {...props} apiKey={apiKey} />;
 }
 
 function ConfiguredPickupMap({
-  apiKey, name, address, height = 240, interactive = false, ...options
+  apiKey, name, address, height = 240, interactive = false, showDirections = true, ...options
 }: BusinessLocationMapProps & { apiKey: string }) {
   const state = usePickupRoute(options);
   const frame = useRef<HTMLIFrameElement>(null);
@@ -54,6 +58,9 @@ function ConfiguredPickupMap({
       </View>
       <PickupMapStatus name={name} address={address} status={state.status}
         route={state.route} message={state.message} onRetry={state.retry} />
+      {showDirections ? <PickupDirectionsButton key={state.key} reservationId={options.reservationId}
+        latitude={latitude} longitude={longitude} userLatitude={state.origin?.latitude}
+        userLongitude={state.origin?.longitude} style={styles.directions} /> : null}
     </View>
   );
 }
@@ -61,5 +68,6 @@ function ConfiguredPickupMap({
 const styles = StyleSheet.create({
   container: { borderRadius: 16, overflow: "hidden", backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: "#EBE3D5", marginVertical: 10 },
   map: { width: "100%", backgroundColor: "#EDE8DD", justifyContent: "center", alignItems: "center" },
+  directions: { marginHorizontal: 14, marginBottom: 14 },
   unavailable: { padding: 20, color: "#795548" },
 });
