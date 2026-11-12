@@ -540,42 +540,151 @@ The `sendPush` function detects `DeviceNotRegistered` errors in the delivery res
 
 ---
 
-## Business Location Map Component (`BusinessLocationMap`)
+## Reservation Pickup Map (Section 4)
 
-Owner: Sachira  
-Exported from: `apps/mobile/src/features/notifications/BusinessLocationMap.tsx` (with `.web.tsx` cross-platform support)
+Owner: Sachira. The reusable component is in
+`apps/mobile/src/features/notifications/BusinessLocationMap.tsx` with a separate web implementation.
+This section implements the embedded map and its route API. It does not implement
+Nistha's reservation list, pickup-details screen, QR code, pickup actions, or status timeline.
+The Google Maps **Get directions** action is Section 5; the previous shop-search button
+is no longer rendered by this component. Its old utility is not the new navigation contract.
 
-### Integration Guide for Nistha (Listing Detail Screen)
-Drop this component into `apps/mobile/app/(customer)/discover/[id].tsx` to display the seller's shop location, real-time distance and estimated travel time, and a direct link to external turn-by-turn navigation.
+### Integration for Nistha: selected reservation's pickup details
+
+Mount the component only when the customer opens **Pickup details** for that order.
+Do not mount a route map in every reservation-list card: mounting requests GPS and a route.
+Unmount it when the details close. Pass the real reservation UUID, not the display/pickup code.
 
 ```tsx
 import { BusinessLocationMap } from "@/features/notifications/BusinessLocationMap";
 
-// In your listing detail view:
+// Inside the selected reservation's pickup details (adapt data names to your API):
 <BusinessLocationMap
-  latitude={listing.business.latitude}
-  longitude={listing.business.longitude}
-  name={listing.business.name}
-  address={listing.business.addressLine}
-  userLatitude={userCoords?.latitude}
-  userLongitude={userCoords?.longitude}
+  key={reservation.id}
+  reservationId={reservation.id}
+  latitude={reservation.listing.business.latitude}
+  longitude={reservation.listing.business.longitude}
+  name={reservation.listing.business.name}
+  address={reservation.listing.business.addressLine}
 />
 ```
 
-### Component Props
+The screen must supply the selected reservation's shop data. The route endpoint independently
+checks ownership and loads the destination from the database. Its returned shop coordinates
+replace the initial pin position, so an outdated screen value does not change the route destination.
+No buyer screen currently imports this component; this integration remains Nistha's work.
 
-| Prop | Type | Default | Description |
-|---|---|---|---|
-| `latitude` | `number` | Required | Shop latitude coordinate |
-| `longitude` | `number` | Required | Shop longitude coordinate |
-| `name` | `string` | Required | Business/store name displayed on the pin callout and card |
-| `address` | `string` | `undefined` | Business street address line |
-| `userLatitude` | `number` | `undefined` | Current customer latitude (for distance/ETA). If omitted, attempts passive GPS lookup |
-| `userLongitude` | `number` | `undefined` | Current customer longitude (for distance/ETA) |
-| `height` | `number` | `200` | Map viewport height in pixels |
-| `interactive` | `boolean` | `false` | Enable/disable map pan and zoom gestures |
+| Prop | Default | Meaning |
+| --- | --- | --- |
+| `reservationId` | Required for the default loader | Authenticated buyer's reservation UUID |
+| `latitude`, `longitude` | Required | Initial shop pin; invalid coordinates show an error |
+| `name`, `address` | Name required | Shop label and optional address |
+| `userLatitude`, `userLongitude` | Omitted | Supply both only if already holding current customer coordinates; otherwise request foreground GPS |
+| `height` | `240` | Map height |
+| `interactive` | `false` | Enable map gestures when desired inside the scrollable pickup screen |
+| `loadRoute` | Authenticated route API | Optional stable callback for tests or integration; returns validated Google route geometry, destination, metres, seconds |
 
-### Features
-- **Native & Web Rendering**: Renders `react-native-maps` on mobile; automatically falls back to an embedded responsive iframe on Web (`npm run web`).
-- **Distance & Travel Times**: Calculates Haversine distance and estimates city driving time (avg 25 km/h) and walking time (avg 4.8 km/h).
-- **Direct Navigation**: "Open in Google Maps" button opens Apple Maps on iOS, Google Maps on Android, or web browser directions on desktop.
+The customer pin is blue; the shop pin and driving route are orange. Bounds include both
+locations and the road geometry. Distance is road distance; duration is Google's driving
+estimate without live traffic. There is no straight-line route or walking-time fallback.
+The map is a snapshot, not continuous navigation: **Refresh route** reacquires GPS when
+coordinates were not supplied. Supplied coordinates must be refreshed by the parent screen.
+
+Permission, GPS, and route waits are bounded (30, 20, and 15 seconds). Failures show a message
+and retry action. Switching orders, changing coordinates, retrying, and unmounting invalidate
+old results. The existing API client's network request cannot be externally cancelled;
+its late result is ignored, while the backend bounds the Google request to 10 seconds.
+This component does not save precise GPS positions to customer preferences or the database.
+
+### POST /api/v1/notifications/pickup-route
+
+Uses the existing Bearer authentication and `{ data }` / `{ error }` API format.
+Allowed roles: CUSTOMER and BUSINESS (buyer). Only the caller's CONFIRMED reservation
+with a future pickup deadline can be routed. Completed, cancelled, and expired pickups
+are rejected. No destination or buyer ID is accepted from the client.
+
+Request:
+```json
+{
+  "reservationId": "2f2da038-3fef-4b35-a629-258236d6bc8c",
+  "origin": { "latitude": 6.9, "longitude": 79.85 }
+}
+```
+
+Response data (illustrative values):
+```json
+{
+  "destination": { "latitude": 6.91, "longitude": 79.86 },
+  "coordinates": [
+    { "latitude": 6.9, "longitude": 79.85 },
+    { "latitude": 6.91, "longitude": 79.86 }
+  ],
+  "distanceMeters": 1500,
+  "durationSeconds": 320.5
+}
+```
+
+Actual coordinates come from Google's GeoJSON LineString; longitude/latitude pairs are
+converted to the app's coordinate shape. The full route is displayed, not a line invented
+between the two example points. The API does not store routes or retry billable requests.
+Successful responses set `Cache-Control: private, no-store`; provider fetches use `no-store`.
+
+| Status / code | Meaning |
+| --- | --- |
+| 400 / VALIDATION_ERROR | Invalid reservation UUID or origin, or unexpected request fields |
+| 401 / 403 | Existing authentication/role checks failed |
+| 404 / RESERVATION_NOT_FOUND | Missing order or another buyer's order |
+| 409 / PICKUP_UNAVAILABLE | Reservation is no longer available for pickup |
+| 422 / SHOP_LOCATION_UNAVAILABLE | Stored shop coordinates are invalid |
+| 503 / ROUTING_NOT_CONFIGURED | Server key is missing or blank |
+| 404 / ROUTE_NOT_FOUND | Google found no driving route |
+| 502 / INVALID_ROUTE or ROUTING_UNAVAILABLE | Invalid response or provider/network failure |
+| 504 / ROUTING_TIMEOUT | Google request exceeded the server timeout |
+
+### Configuration handoff for Kalindu (not changed in Section 4)
+
+1. Enable Google Routes API and billing; provide `GOOGLE_ROUTES_API_KEY` only to the web
+   backend environment. Restrict this key to Routes API and the applicable server restrictions.
+   Never put it in an `EXPO_PUBLIC_*` variable or send it to the app.
+2. Configure separate restricted Maps SDK keys for Android and iOS in the
+   `react-native-maps` Expo plugin and create a new development/production native build.
+   The component explicitly uses `PROVIDER_GOOGLE` on both platforms. The current app config
+   does not yet configure these Google Maps keys. Follow the installed SDK's configuration
+   instructions: [Expo SDK 58 react-native-maps](https://docs.expo.dev/versions/v58.0.0/sdk/map-view/).
+3. For Expo Web, enable Maps JavaScript API and set
+   `EXPO_PUBLIC_GOOGLE_MAPS_WEB_API_KEY` to a browser/referrer-restricted key. Set
+   `EXPO_PUBLIC_GOOGLE_MAPS_WEB_MAP_ID` to your web map ID for production; `DEMO_MAP_ID`
+   is the development default. Without a web key the component shows unavailable and makes
+   no GPS or route request. Serve over HTTPS (or localhost) for browser geolocation.
+4. Keep foreground location permission configured. No background tracking is used.
+   Existing `expo-location` configuration already includes a foreground permission explanation;
+   review the wording for pickup navigation when preparing the build.
+5. Set project quotas appropriate to expected map/route usage before live integration testing.
+   Each map mount or explicit refresh can request a route. There is no automatic route polling.
+   Web pin/route updates reuse the existing map instance; a user retry reloads the map.
+
+The implementation follows [Google computeRoutes](https://developers.google.com/maps/documentation/routes/reference/rest/v2/TopLevel/computeRoutes)
+and renders its geometry on Google Maps on each platform. Google keys, billing settings,
+platform configuration, dependencies, reservation screens, and database schema were not changed.
+No live Google requests were made during this section's automated verification.
+
+### Verification
+
+Run from the repository root:
+```powershell
+node --test apps/web/src/server/modules/notifications/pickup-route.service.test.mjs
+node --test apps/mobile/src/features/notifications/pickupRoute.test.mjs apps/mobile/src/features/notifications/pickupMapDocument.test.mjs
+npm run typecheck -w @bitego/web
+npm run typecheck -w @bitego/mobile
+```
+
+The focused tests execute the real TypeScript service, hook, validators, and iframe script with
+mocked database, authentication, GPS, and Google boundaries. They cover reservation ownership,
+closed pickups, coordinate validation, provider errors/timeouts, zero distance, retries, stale
+order/GPS responses, safe HTML data embedding, and web updates without map re-creation.
+They do not verify native map rendering, live credentials, or real road accuracy.
+
+After configuration and screen integration, manually verify on Android, iOS, and Web:
+open one order's Pickup details; allow GPS; see two pins, a road route, road distance, and driving
+duration; switch orders while loading; deny GPS; simulate offline/no-route; and retry.
+Check that the route belongs to the selected order and that map bounds show both endpoints.
