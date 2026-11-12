@@ -245,7 +245,19 @@ Protected by `CRON_SECRET` sent via `Authorization: Bearer <CRON_SECRET>` or `x-
 
 ### GET or POST /cron/expire
 
-Expires listings past their pickup deadline (`pickupEnd <= now()`) and marks uncollected reservations as `EXPIRED`, sending an in-app alert to the customer.
+Expires past-due `ACTIVE` or `SOLD_OUT` listings and past-due `CONFIRMED` reservations. The job captures one cutoff time at the start; a pickup deadline equal to that time is expired.
+
+Reservation eligibility is checked in the update itself. Only rows returned by that update contribute to `expiredReservationsCount` and receive an expiry notification attempt. A pickup or cancellation that changes the reservation first is preserved. Repeated or overlapping expiry runs do not claim an already-expired reservation again.
+
+Notifications respect the user's preferences. Notification failures are logged and do not undo expiry or prevent attempts for other affected buyers. Delivery is not transactional with expiry: a failed notification or a process exit after the update is not retried by this job. The count reports status changes, not successful deliveries.
+
+Run the focused regression tests from the repository root:
+
+```powershell
+node --test apps/web/src/server/modules/jobs/expiry.job.test.mjs
+```
+
+These tests execute the job with mocked database and notification dependencies, including competing status changes and overlapping runs. They do not replace a PostgreSQL concurrency integration test.
 
 **200 response**
 
