@@ -7,8 +7,10 @@ import { runReminderJob } from "@/server/modules/jobs/reminder.job";
 
 function verifyCronAuth(req: NextRequest): void {
   const secret = process.env.CRON_SECRET;
-  // If no secret is configured in development, allow access for testing.
-  if (!secret) return;
+  // Fail closed in every environment when the job's secret is not configured.
+  if (!secret || !secret.trim()) {
+    throw new ApiError(503, "CRON_NOT_CONFIGURED", "Scheduled jobs are not configured");
+  }
 
   const authHeader = req.headers.get("authorization");
   const customHeader = req.headers.get("x-cron-secret");
