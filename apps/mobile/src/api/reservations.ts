@@ -49,7 +49,15 @@ export type Reservation = {
 export async function getBuyerReservations(): Promise<Reservation[]> {
   return apiFetch<Reservation[]>("/reservations");
 }
-
+export async function createBuyerReservation(
+  listingId: string,
+  quantity: number,
+): Promise<Reservation> {
+  return apiFetch<Reservation>("/reservations", {
+    method: "POST",
+    body: { listingId, quantity },
+  });
+}
 export async function cancelBuyerReservation(
   reservationId: string,
   reason?: string,
