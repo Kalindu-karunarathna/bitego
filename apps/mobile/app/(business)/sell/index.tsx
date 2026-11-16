@@ -1,6 +1,4 @@
-import { Placeholder } from "@/components/Placeholder";
+import { DashboardScreen } from "@/features/listings/DashboardScreen";
 
-// Owner: Kajanika. Replace the Placeholder with the real screen.
-export default function Screen() {
-  return <Placeholder title="My listings" owner="Kajanika" description="Post and manage your surplus food listings." />;
-}
+// Owner: Kajanika. The seller dashboard.
+export default DashboardScreen;
