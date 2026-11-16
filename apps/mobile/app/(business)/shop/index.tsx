@@ -1,6 +1,4 @@
-import { ProfileView } from "@/features/profile/ProfileView";
+import { ShopScreen } from "@/features/shop/ShopScreen";
 
-// Owner: Kajanika. Replace with the real shop profile screen (edit business details and location).
-export default function Shop() {
-  return <ProfileView />;
-}
+// Owner: Kajanika.
+export default ShopScreen;
