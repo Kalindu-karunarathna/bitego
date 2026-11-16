@@ -35,3 +35,14 @@ export type CancelReservationInput = z.infer<
 export type VerifyPickupInput = z.infer<
   typeof verifyPickupSchema
 >;
+
+// Create a review after successful food pickup.
+export const createReviewSchema = z.object({
+  reservationId: z.uuid(),
+  rating: z.number().int().min(1).max(5),
+  comment: z.string().trim().max(1000).optional(),
+});
+
+export type CreateReviewInput = z.infer<
+  typeof createReviewSchema
+>;

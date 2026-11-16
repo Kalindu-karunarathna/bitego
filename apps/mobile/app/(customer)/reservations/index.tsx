@@ -1,11 +1,14 @@
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Alert,
   Image,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 
@@ -16,6 +19,11 @@ import {
   getBuyerReservations,
   type Reservation,
 } from "@/api/reservations";
+
+import {
+  createBuyerReview,
+  getBuyerReviewedReservationIds,
+} from "@/api/reviews";
 
 const COLORS = {
   background: "#F3E9E0",
@@ -29,6 +37,7 @@ const COLORS = {
   greenLight: "#FFF0CF",
   red: "#C43D32",
   blue: "#2865B0",
+  star: "#E5A000",
 };
 
 const TABS = [
@@ -128,13 +137,10 @@ function belongsToTab(reservation: Reservation, tab: TabValue) {
   switch (tab) {
     case "UPCOMING":
       return reservation.status === "CONFIRMED";
-
     case "COMPLETED":
       return reservation.status === "PICKED_UP";
-
     case "CANCELLED":
       return reservation.status === "CANCELLED";
-
     case "NO_SHOW":
       return reservation.status === "NO_SHOW";
   }
@@ -142,11 +148,24 @@ function belongsToTab(reservation: Reservation, tab: TabValue) {
 
 export default function ReservationsScreen() {
   const [reservations, setReservations] = useState<Reservation[]>([]);
+
+  const [reviewedReservationIds, setReviewedReservationIds] =
+    useState<string[]>([]);
+
   const [activeTab, setActiveTab] = useState<TabValue>("UPCOMING");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
 
+  // Review state
+  const [reviewReservation, setReviewReservation] =
+    useState<Reservation | null>(null);
+
+  const [reviewRating, setReviewRating] = useState(5);
+  const [reviewComment, setReviewComment] = useState("");
+  const [submittingReview, setSubmittingReview] = useState(false);
+
+  // Load buyer reservations
   const loadReservations = useCallback(async (showLoading = true) => {
     if (showLoading) {
       setLoading(true);
@@ -168,22 +187,43 @@ export default function ReservationsScreen() {
     }
   }, []);
 
+  // Load reservation IDs that already have reviews
+  const loadReviewedReservationIds = useCallback(async () => {
+    try {
+      const ids = await getBuyerReviewedReservationIds();
+
+      console.log("[REVIEW API DEBUG]", {
+        ids,
+        isArray: Array.isArray(ids),
+      });
+
+      setReviewedReservationIds(ids);
+    } catch (err) {
+      console.warn(
+        "Unable to load reviewed reservations:",
+        err,
+      );
+    }
+  }, []);
+
+  // Load reservations and review status when screen opens
   useEffect(() => {
     void loadReservations();
-  }, [loadReservations]);
+    void loadReviewedReservationIds();
+  }, [loadReservations, loadReviewedReservationIds]);
 
   const filteredReservations = useMemo(
     () => reservations.filter((item) => belongsToTab(item, activeTab)),
     [reservations, activeTab],
   );
 
+  // Cancel reservation
   const confirmCancellation = async (reservation: Reservation) => {
     setCancellingId(reservation.id);
     setError(null);
 
     try {
       await cancelBuyerReservation(reservation.id);
-
       await loadReservations(false);
 
       Alert.alert(
@@ -201,6 +241,59 @@ export default function ReservationsScreen() {
     }
   };
 
+  // Submit buyer review
+  const handleSubmitReview = async () => {
+    if (!reviewReservation || submittingReview) {
+      return;
+    }
+
+    if (reviewComment.trim().length > 1000) {
+      Alert.alert(
+        "Comment too long",
+        "Your review comment cannot exceed 1000 characters.",
+      );
+      return;
+    }
+
+    setSubmittingReview(true);
+
+    try {
+      const submittedReservationId = reviewReservation.id;
+
+      await createBuyerReview({
+        reservationId: submittedReservationId,
+        rating: reviewRating,
+        comment: reviewComment.trim() || undefined,
+      });
+
+      // Immediately mark this reservation as reviewed
+      setReviewedReservationIds((previousIds) =>
+        previousIds.includes(submittedReservationId)
+          ? previousIds
+          : [...previousIds, submittedReservationId],
+      );
+
+      Alert.alert(
+        "Review submitted",
+        "Thank you for sharing your experience!",
+      );
+
+      setReviewReservation(null);
+      setReviewRating(5);
+      setReviewComment("");
+    } catch (err) {
+      Alert.alert(
+        "Unable to submit review",
+        err instanceof Error
+          ? err.message
+          : "Please try again.",
+      );
+    } finally {
+      setSubmittingReview(false);
+    }
+  };
+
+  // Show pickup details
   const handlePickupDetails = (reservation: Reservation) => {
     const listing = reservation.listing;
     const business = listing.business;
@@ -348,12 +441,24 @@ export default function ReservationsScreen() {
         ) : (
           filteredReservations.map((reservation) => {
             const listing = reservation.listing;
+
             const image =
               listing.images.find((item) => item.isPrimary) ??
               listing.images[0];
 
             const status = reservation.status;
             const isCancelling = cancellingId === reservation.id;
+
+            const hasReviewed = reviewedReservationIds.includes(
+              reservation.id,
+            );
+
+            console.log("[REVIEW DEBUG]", {
+              reservationId: reservation.id,
+              reservationStatus: reservation.status,
+              reviewedReservationIds,
+              hasReviewed,
+            });
 
             return (
               <View key={reservation.id} style={styles.card}>
@@ -365,7 +470,12 @@ export default function ReservationsScreen() {
                       style={styles.foodImage}
                     />
                   ) : (
-                    <View style={[styles.foodImage, styles.imagePlaceholder]}>
+                    <View
+                      style={[
+                        styles.foodImage,
+                        styles.imagePlaceholder,
+                      ]}
+                    >
                       <Text style={styles.placeholderText}>Food</Text>
                     </View>
                   )}
@@ -374,7 +484,10 @@ export default function ReservationsScreen() {
                     <View
                       style={[
                         styles.statusBadge,
-                        { backgroundColor: getStatusBackground(status) },
+                        {
+                          backgroundColor:
+                            getStatusBackground(status),
+                        },
                       ]}
                     >
                       <View
@@ -447,13 +560,132 @@ export default function ReservationsScreen() {
                   onPress={() => handlePickupDetails(reservation)}
                 >
                   <Text style={styles.detailsButtonText}>
-                    {isCancelling ? "Cancelling..." : "Pickup details"}
+                    {isCancelling
+                      ? "Cancelling..."
+                      : "Pickup details"}
                   </Text>
                 </Pressable>
+
+                {/* Review button: only for completed, unreviewed reservations */}
+                {reservation.status === "PICKED_UP" && !hasReviewed ? (
+                  <Pressable
+                    style={styles.reviewButton}
+                    onPress={() => {
+                      setReviewReservation(reservation);
+                      setReviewRating(5);
+                      setReviewComment("");
+                    }}
+                  >
+                    <Text style={styles.reviewButtonText}>
+                      ★ Rate this food
+                    </Text>
+                  </Pressable>
+                ) : null}
               </View>
             );
           })
         )}
+
+        {/* Review modal */}
+        <Modal
+          visible={reviewReservation !== null}
+          transparent
+          animationType="slide"
+          onRequestClose={() => {
+            if (!submittingReview) {
+              setReviewReservation(null);
+            }
+          }}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.reviewModal}>
+              <Text style={styles.modalTitle}>Rate your food</Text>
+
+              {reviewReservation ? (
+                <>
+                  <Text style={styles.modalFoodTitle}>
+                    {reviewReservation.listing.title}
+                  </Text>
+
+                  <Text style={styles.modalShopName}>
+                    {reviewReservation.listing.business.name}
+                  </Text>
+                </>
+              ) : null}
+
+              <Text style={styles.ratingLabel}>
+                How was your experience?
+              </Text>
+
+              <View style={styles.starsRow}>
+                {[1, 2, 3, 4, 5].map((star) => (
+                  <Pressable
+                    key={star}
+                    disabled={submittingReview}
+                    onPress={() => setReviewRating(star)}
+                    style={styles.starButton}
+                  >
+                    <Text
+                      style={[
+                        styles.starText,
+                        star <= reviewRating && styles.selectedStar,
+                      ]}
+                    >
+                      ★
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+
+              <Text style={styles.ratingDescription}>
+                {reviewRating} out of 5 stars
+              </Text>
+
+              <Text style={styles.commentLabel}>
+                Comment (optional)
+              </Text>
+
+              <TextInput
+                style={styles.commentInput}
+                placeholder="Share your experience..."
+                placeholderTextColor={COLORS.muted}
+                value={reviewComment}
+                onChangeText={setReviewComment}
+                multiline
+                maxLength={1000}
+                editable={!submittingReview}
+                textAlignVertical="top"
+              />
+
+              <Text style={styles.characterCount}>
+                {reviewComment.length}/1000
+              </Text>
+
+              <Pressable
+                style={[
+                  styles.submitReviewButton,
+                  submittingReview && styles.disabledButton,
+                ]}
+                disabled={submittingReview}
+                onPress={() => void handleSubmitReview()}
+              >
+                <Text style={styles.submitReviewText}>
+                  {submittingReview
+                    ? "Submitting..."
+                    : "Submit review"}
+                </Text>
+              </Pressable>
+
+              <Pressable
+                style={styles.closeModalButton}
+                disabled={submittingReview}
+                onPress={() => setReviewReservation(null)}
+              >
+                <Text style={styles.closeModalText}>Cancel</Text>
+              </Pressable>
+            </View>
+          </View>
+        </Modal>
       </View>
     </Screen>
   );
@@ -629,6 +861,23 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
 
+  reviewButton: {
+    height: 43,
+    borderRadius: 12,
+    backgroundColor: COLORS.primaryLight,
+    borderWidth: 1,
+    borderColor: COLORS.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 9,
+  },
+
+  reviewButtonText: {
+    color: COLORS.primary,
+    fontSize: 14,
+    fontWeight: "800",
+  },
+
   disabledButton: {
     opacity: 0.6,
   },
@@ -687,5 +936,128 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     fontSize: 12,
     marginTop: 7,
+  },
+
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "center",
+    paddingHorizontal: 20,
+  },
+
+  reviewModal: {
+    backgroundColor: COLORS.card,
+    borderRadius: 22,
+    padding: 22,
+  },
+
+  modalTitle: {
+    fontSize: 22,
+    fontWeight: "800",
+    color: COLORS.text,
+    textAlign: "center",
+  },
+
+  modalFoodTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: COLORS.text,
+    textAlign: "center",
+    marginTop: 13,
+  },
+
+  modalShopName: {
+    fontSize: 12,
+    color: COLORS.muted,
+    textAlign: "center",
+    marginTop: 4,
+  },
+
+  ratingLabel: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: COLORS.text,
+    textAlign: "center",
+    marginTop: 24,
+  },
+
+  starsRow: {
+    flexDirection: "row",
+    justifyContent: "center",
+    marginTop: 12,
+  },
+
+  starButton: {
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+  },
+
+  starText: {
+    fontSize: 39,
+    color: COLORS.border,
+  },
+
+  selectedStar: {
+    color: COLORS.star,
+  },
+
+  ratingDescription: {
+    fontSize: 12,
+    color: COLORS.muted,
+    textAlign: "center",
+    marginTop: 5,
+  },
+
+  commentLabel: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: COLORS.text,
+    marginTop: 20,
+    marginBottom: 8,
+  },
+
+  commentInput: {
+    minHeight: 95,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 12,
+    padding: 12,
+    fontSize: 13,
+    color: COLORS.text,
+    backgroundColor: "#FFFCFA",
+  },
+
+  characterCount: {
+    fontSize: 10,
+    color: COLORS.muted,
+    textAlign: "right",
+    marginTop: 5,
+  },
+
+  submitReviewButton: {
+    height: 47,
+    backgroundColor: COLORS.primary,
+    borderRadius: 12,
+    justifyContent: "center",
+    alignItems: "center",
+    marginTop: 19,
+  },
+
+  submitReviewText: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "800",
+  },
+
+  closeModalButton: {
+    alignItems: "center",
+    paddingVertical: 13,
+    marginTop: 4,
+  },
+
+  closeModalText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: COLORS.muted,
   },
 });
