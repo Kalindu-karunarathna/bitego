@@ -1,7 +1,6 @@
 
 import { createReservationSchema } from "@bitego/shared";
-
-import { ApiError, ok, parseBody, route } from "@/lib/http";
+import { ok, parseBody, route } from "@/lib/http";
 import { requireRole } from "@/server/middleware/auth";
 import {
   createReservation,
