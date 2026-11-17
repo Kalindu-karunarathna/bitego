@@ -1,7 +1,7 @@
 
 import { createReservationSchema } from "@bitego/shared";
 import { ok, parseBody, route } from "@/lib/http";
-import { requireRole } from "@/server/middleware/auth";
+import { requireBuyer } from "@/server/modules/buyer/buyer-auth";
 import {
   createReservation,
   listBuyerReservations,
@@ -10,7 +10,7 @@ import {
 // GET /api/v1/reservations
 // Returns the authenticated buyer's reservation history.
 export const GET = route(async (req) => {
-  const { user } = await requireRole(req, "CUSTOMER", "BUSINESS");
+  const { user } = await requireBuyer(req);
 
   const reservations = await listBuyerReservations(user.id);
 
@@ -20,7 +20,7 @@ export const GET = route(async (req) => {
 // POST /api/v1/reservations
 // Creates a new reservation.
 export const POST = route(async (req) => {
-  const { user } = await requireRole(req, "CUSTOMER", "BUSINESS");
+  const { user } = await requireBuyer(req);
 
   const input = await parseBody(req, createReservationSchema);
 

@@ -33,7 +33,8 @@
         {
           "locationWhenInUsePermission": "BiteGo uses your location to set your shop location and to find food near you."
         }
-      ]
+      ],
+      "expo-status-bar"
     ]
   }
 }

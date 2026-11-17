@@ -3,6 +3,7 @@ import { randomInt } from "node:crypto";
 import type { User } from "@/generated/prisma/client";
 import { ApiError } from "@/lib/http";
 import { prisma } from "@/lib/prisma";
+import { notify } from "@/server/modules/notifications/notify";
 
 type CreateReservationData = {
   listingId: string;
@@ -11,15 +12,73 @@ type CreateReservationData = {
 
 type Buyer = Pick<User, "id" | "role">;
 
+const MAX_PICKUP_CODE_ATTEMPTS = 3;
+
 function generatePickupCode(): string {
   return randomInt(0, 1_000_000).toString().padStart(6, "0");
 }
 
-export async function createReservation(
+function getUniqueConstraintTarget(error: unknown): string {
+  if (
+    typeof error !== "object" ||
+    error === null ||
+    !("code" in error) ||
+    error.code !== "P2002" ||
+    !("meta" in error)
+  ) {
+    return "";
+  }
+
+  const meta = error.meta;
+
+  if (typeof meta !== "object" || meta === null || !("target" in meta)) {
+    return "";
+  }
+
+  const target = meta.target;
+
+  return Array.isArray(target)
+    ? target.join(",").toLowerCase()
+    : typeof target === "string"
+      ? target.toLowerCase()
+      : "";
+}
+
+function isPickupCodeCollision(error: unknown): boolean {
+  const target = getUniqueConstraintTarget(error);
+
+  return (
+    target.includes("pickupcode") ||
+    target.includes("pickup_code")
+  );
+}
+
+function isActiveReservationConflict(error: unknown): boolean {
+  const target = getUniqueConstraintTarget(error);
+
+  return (
+    target.includes("reservations_one_active_per_buyer_listing") ||
+    (target.includes("listingid") && target.includes("buyerid")) ||
+    (target.includes("listing_id") && target.includes("buyer_id"))
+  );
+}
+
+// Notification failures must never undo an already committed reservation.
+async function notifySafely(input: Parameters<typeof notify>[0]): Promise<void> {
+  try {
+    await notify(input);
+  } catch (error) {
+    console.error("[reservations] Notification failed:", error);
+  }
+}
+
+async function createReservationAttempt(
   input: CreateReservationData,
   buyer: Buyer,
 ) {
   return prisma.$transaction(async (tx) => {
+    const now = new Date();
+
     const listing = await tx.foodListing.findUnique({
       where: { id: input.listingId },
       include: {
@@ -29,11 +88,47 @@ export async function createReservation(
             status: true,
           },
         },
+        category: {
+          select: {
+            b2bSuitability: true,
+            isActive: true,
+          },
+        },
       },
     });
 
     if (!listing) {
-      throw new ApiError(404, "LISTING_NOT_FOUND", "Food listing not found");
+      throw new ApiError(
+        404,
+        "LISTING_NOT_FOUND",
+        "Food listing not found",
+      );
+    }
+
+    if (buyer.role === "BUSINESS") {
+      const buyerBusiness = await tx.business.findUnique({
+        where: { ownerId: buyer.id },
+        select: { status: true },
+      });
+
+      if (buyerBusiness?.status !== "ACTIVE") {
+        throw new ApiError(
+          403,
+          "BUSINESS_NOT_APPROVED",
+          "Your business must be approved before buying food",
+        );
+      }
+
+      if (
+        !listing.category.isActive ||
+        listing.category.b2bSuitability !== "SUITABLE"
+      ) {
+        throw new ApiError(
+          403,
+          "B2B_CATEGORY_RESTRICTED",
+          "This food category is not approved for business buyers",
+        );
+      }
     }
 
     if (listing.business.ownerId === buyer.id) {
@@ -52,7 +147,15 @@ export async function createReservation(
       );
     }
 
-    if (listing.status !== "ACTIVE" || listing.pickupEnd <= new Date()) {
+    if (!listing.category.isActive) {
+      throw new ApiError(
+        409,
+        "CATEGORY_INACTIVE",
+        "This food category is no longer available",
+      );
+    }
+
+    if (listing.status !== "ACTIVE" || listing.pickupEnd <= now) {
       throw new ApiError(
         409,
         "LISTING_UNAVAILABLE",
@@ -75,6 +178,26 @@ export async function createReservation(
       );
     }
 
+    // Prevent multiple active reservations by the same buyer.
+    const existingReservation = await tx.reservation.findFirst({
+      where: {
+        listingId: listing.id,
+        buyerId: buyer.id,
+        status: "CONFIRMED",
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (existingReservation) {
+      throw new ApiError(
+        409,
+        "ACTIVE_RESERVATION_EXISTS",
+        "You already have an active reservation for this listing",
+      );
+    }
+
     if (input.quantity > listing.quantityAvailable) {
       throw new ApiError(
         409,
@@ -88,11 +211,13 @@ export async function createReservation(
       where: {
         id: listing.id,
         status: "ACTIVE",
-        pickupEnd: { gt: new Date() },
+        pickupEnd: { gt: now },
         quantityAvailable: { gte: input.quantity },
       },
       data: {
-        quantityAvailable: { decrement: input.quantity },
+        quantityAvailable: {
+          decrement: input.quantity,
+        },
       },
     });
 
@@ -121,7 +246,7 @@ export async function createReservation(
     const unitPrice = listing.price;
     const totalPrice = unitPrice.mul(input.quantity);
 
-    return tx.reservation.create({
+    const reservation = await tx.reservation.create({
       data: {
         listingId: listing.id,
         buyerId: buyer.id,
@@ -131,7 +256,96 @@ export async function createReservation(
         pickupCode: generatePickupCode(),
       },
     });
+
+    return {
+      reservation,
+      businessOwnerId: listing.business.ownerId,
+    };
   });
+}
+
+export async function createReservation(
+  input: CreateReservationData,
+  buyer: Buyer,
+) {
+  // Validate quantity at service level as well as API level.
+  if (!Number.isInteger(input.quantity) || input.quantity <= 0) {
+    throw new ApiError(
+      400,
+      "INVALID_QUANTITY",
+      "Quantity must be a positive whole number",
+    );
+  }
+
+  let result:
+    | Awaited<ReturnType<typeof createReservationAttempt>>
+    | undefined;
+
+  // Retry the entire transaction, not just the INSERT.
+  // PostgreSQL transactions cannot safely continue after a unique violation.
+  for (
+    let attempt = 1;
+    attempt <= MAX_PICKUP_CODE_ATTEMPTS;
+    attempt++
+  ) {
+    try {
+      result = await createReservationAttempt(input, buyer);
+      break;
+    } catch (error) {
+      if (isPickupCodeCollision(error)) {
+        if (attempt < MAX_PICKUP_CODE_ATTEMPTS) {
+          continue;
+        }
+
+        throw new ApiError(
+          409,
+          "PICKUP_CODE_GENERATION_FAILED",
+          "Unable to generate a unique pickup code. Please try again",
+        );
+      }
+
+      // Handles concurrent duplicate requests caught by the
+      // PostgreSQL partial unique index.
+      if (isActiveReservationConflict(error)) {
+        throw new ApiError(
+          409,
+          "ACTIVE_RESERVATION_EXISTS",
+          "You already have an active reservation for this listing",
+        );
+      }
+
+      throw error;
+    }
+  }
+
+  if (!result) {
+    throw new Error("Reservation creation failed unexpectedly");
+  }
+
+  const { reservation, businessOwnerId } = result;
+
+  // Notify the buyer and the business owner after transaction commit.
+  await Promise.all([
+    notifySafely({
+      userId: buyer.id,
+      type: "RESERVATION_CONFIRMED",
+      title: "Reservation confirmed",
+      message: "Your food reservation has been confirmed.",
+      listingId: reservation.listingId,
+      reservationId: reservation.id,
+    }),
+
+    notifySafely({
+      userId: businessOwnerId,
+      type: "NEW_RESERVATION",
+      title: "New reservation",
+      message: "A buyer has reserved food from your listing.",
+      listingId: reservation.listingId,
+      reservationId: reservation.id,
+    }),
+  ]);
+
+  return reservation;
 }
 
 export async function listBuyerReservations(buyerId: string) {
@@ -177,11 +391,19 @@ export async function cancelReservation(
   buyerId: string,
   reason?: string,
 ) {
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const reservation = await tx.reservation.findUnique({
       where: { id: reservationId },
       include: {
-        listing: true,
+        listing: {
+          include: {
+            business: {
+              select: {
+                ownerId: true,
+              },
+            },
+          },
+        },
       },
     });
 
@@ -255,8 +477,25 @@ export async function cancelReservation(
       },
     });
 
-    return tx.reservation.findUniqueOrThrow({
+    const updatedReservation = await tx.reservation.findUniqueOrThrow({
       where: { id: reservationId },
     });
+
+    return {
+      reservation: updatedReservation,
+      businessOwnerId: reservation.listing.business.ownerId,
+    };
   });
+
+  // Notify the business only after cancellation commits successfully.
+  await notifySafely({
+    userId: result.businessOwnerId,
+    type: "RESERVATION_CANCELLED",
+    title: "Reservation cancelled",
+    message: "A buyer has cancelled a reservation for your listing.",
+    listingId: result.reservation.listingId,
+    reservationId: result.reservation.id,
+  });
+
+  return result.reservation;
 }
