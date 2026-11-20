@@ -2,13 +2,13 @@
 import { cancelReservationSchema } from "@bitego/shared";
 
 import { ApiError, ok, parseBody, route } from "@/lib/http";
-import { requireRole } from "@/server/middleware/auth";
+import { requireBuyer } from "@/server/modules/buyer/buyer-auth";
 import { cancelReservation } from "@/server/modules/reservations/reservations.service";
 
 // PATCH /api/v1/reservations/:id
 // Cancels the authenticated buyer's reservation.
 export const PATCH = route(async (req, context) => {
-  const { user } = await requireRole(req, "CUSTOMER", "BUSINESS");
+  const { user } = await requireBuyer(req);
 
   const { id } = await (
     context as { params: Promise<{ id: string }> }

@@ -120,6 +120,36 @@ export async function discoverListings(
 ): Promise<DiscoveryResponse> {
   const now = new Date();
 
+  // Business buyers use their registered business location as the search origin.
+  const buyerBusiness =
+    role === "BUSINESS"
+      ? await prisma.business.findUnique({
+          where: { ownerId: userId },
+          select: {
+            status: true,
+            latitude: true,
+            longitude: true,
+          },
+        })
+      : null;
+
+  if (role === "BUSINESS" && buyerBusiness?.status !== "ACTIVE") {
+    throw new ApiError(
+      403,
+      "BUSINESS_NOT_APPROVED",
+      "Your business must be approved before buying food",
+    );
+  }
+
+  const originLatitude =
+    role === "BUSINESS"
+      ? buyerBusiness?.latitude
+      : filters.latitude;
+  const originLongitude =
+    role === "BUSINESS"
+      ? buyerBusiness?.longitude
+      : filters.longitude;
+
   const allowedAudiences = getAllowedAudiences(role);
 
   const audienceFilter: ListingAudienceValue[] = filters.audience
@@ -155,6 +185,9 @@ export async function discoverListings(
     category: {
       is: {
         isActive: true,
+        ...(role === "BUSINESS"
+          ? { b2bSuitability: "SUITABLE" as const }
+          : {}),
       },
     },
 
@@ -240,11 +273,11 @@ export async function discoverListings(
 
   let items = listings.map((listing) => {
     const distance =
-      filters.latitude !== undefined &&
-      filters.longitude !== undefined
+      originLatitude !== undefined &&
+      originLongitude !== undefined
         ? calculateDistance(
-            filters.latitude,
-            filters.longitude,
+            originLatitude,
+            originLongitude,
             listing.business.latitude,
             listing.business.longitude,
           )
@@ -256,13 +289,13 @@ export async function discoverListings(
   // Radius filtering and pagination.
   if (radiusSearch) {
     if (
-      filters.latitude === undefined ||
-      filters.longitude === undefined
+      originLatitude === undefined ||
+      originLongitude === undefined
     ) {
       throw new ApiError(
         400,
         "LOCATION_REQUIRED",
-        "Latitude and longitude are required for radius filtering",
+        "A buyer location is required for radius filtering",
       );
     }
 
@@ -318,6 +351,22 @@ export async function getListingDetail(
 ): Promise<ListingDto> {
   const allowedAudiences = getAllowedAudiences(role);
 
+  const buyerBusiness =
+    role === "BUSINESS"
+      ? await prisma.business.findUnique({
+          where: { ownerId: userId },
+          select: { status: true },
+        })
+      : null;
+
+  if (role === "BUSINESS" && buyerBusiness?.status !== "ACTIVE") {
+    throw new ApiError(
+      403,
+      "BUSINESS_NOT_APPROVED",
+      "Your business must be approved before buying food",
+    );
+  }
+
   const listing = await prisma.foodListing.findFirst({
     where: {
       id: listingId,
@@ -348,6 +397,9 @@ export async function getListingDetail(
       category: {
         is: {
           isActive: true,
+          ...(role === "BUSINESS"
+            ? { b2bSuitability: "SUITABLE" as const }
+            : {}),
         },
       },
     },
