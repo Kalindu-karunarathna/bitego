@@ -488,14 +488,26 @@ export async function cancelReservation(
   });
 
   // Notify the business only after cancellation commits successfully.
-  await notifySafely({
+// Notify both buyer and business owner after cancellation commits.
+await Promise.all([
+  notifySafely({
+    userId: buyerId,
+    type: "RESERVATION_CANCELLED",
+    title: "Reservation cancelled",
+    message: "Your food reservation has been cancelled successfully.",
+    listingId: result.reservation.listingId,
+    reservationId: result.reservation.id,
+  }),
+
+  notifySafely({
     userId: result.businessOwnerId,
     type: "RESERVATION_CANCELLED",
     title: "Reservation cancelled",
     message: "A buyer has cancelled a reservation for your listing.",
     listingId: result.reservation.listingId,
     reservationId: result.reservation.id,
-  });
+  }),
+]);
 
   return result.reservation;
 }

@@ -1,3 +1,4 @@
+
 import type {
   DiscoveryFilters,
   DiscoveryResponse,
@@ -145,6 +146,7 @@ export async function discoverListings(
     role === "BUSINESS"
       ? buyerBusiness?.latitude
       : filters.latitude;
+
   const originLongitude =
     role === "BUSINESS"
       ? buyerBusiness?.longitude
@@ -182,12 +184,11 @@ export async function discoverListings(
       },
     },
 
+    // Category must be active.
+    // B2B visibility is controlled by listing audience, not category suitability.
     category: {
       is: {
         isActive: true,
-        ...(role === "BUSINESS"
-          ? { b2bSuitability: "SUITABLE" as const }
-          : {}),
       },
     },
 
@@ -397,9 +398,6 @@ export async function getListingDetail(
       category: {
         is: {
           isActive: true,
-          ...(role === "BUSINESS"
-            ? { b2bSuitability: "SUITABLE" as const }
-            : {}),
         },
       },
     },
