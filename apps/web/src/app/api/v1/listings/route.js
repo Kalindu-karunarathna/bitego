@@ -1,3 +1,4 @@
+
 import { discoveryFiltersSchema } from "@bitego/shared";
 
 import { ok, route } from "@/lib/http";
@@ -9,9 +10,7 @@ export const GET = route(async (req) => {
   const { user } = await requireBuyer(req);
 
   const filters = discoveryFiltersSchema.parse(
-    Object.fromEntries(
-      req.nextUrl.searchParams.entries(),
-    ),
+    Object.fromEntries(req.nextUrl.searchParams.entries()),
   );
 
   const result = await discoverListings(
@@ -22,3 +21,4 @@ export const GET = route(async (req) => {
 
   return ok(result);
 });
+ 

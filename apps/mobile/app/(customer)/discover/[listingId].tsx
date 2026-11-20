@@ -1,4 +1,5 @@
-﻿import { useEffect, useState } from "react";
+﻿import { ReportButton } from "@/features/reports/ReportButton";
+import { useEffect, useState } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
 
 import {
@@ -302,51 +303,22 @@ export default function ListingDetailsScreen() {
         </View>
 
         <View style={styles.infoCard}>
-          <Text style={styles.cardTitle}>
-            Availability
-          </Text>
+  <Text style={styles.cardTitle}>
+    Seller information
+  </Text>
 
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>
-              Available quantity
-            </Text>
+  <Text style={styles.shopName}>
+    {listing.business.name}
+  </Text>
 
-            <Text style={styles.infoValue}>
-              {available} {listing.unit}
-            </Text>
-          </View>
+  <Text style={styles.address}>
+    {location}
+  </Text>
 
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>
-              Pickup starts
-            </Text>
-
-            <Text style={styles.infoValue}>
-              {formatDateTime(listing.pickupStart)}
-            </Text>
-          </View>
-
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>
-              Pickup ends
-            </Text>
-
-            <Text style={styles.infoValue}>
-              {formatDateTime(listing.pickupEnd)}
-            </Text>
-          </View>
-
-          {listing.pickupNote && (
-            <View style={styles.noteContainer}>
-              <Text style={styles.infoLabel}>
-                Pickup instructions
-              </Text>
-              <Text style={styles.noteText}>
-                {listing.pickupNote}
-              </Text>
-            </View>
-          )}
-        </View>
+  <View style={{ marginTop: 12, alignSelf: "flex-start" }}>
+    <ReportButton listingId={listing.id} />
+  </View>
+</View>
 
         <View style={styles.infoCard}>
           <Text style={styles.cardTitle}>

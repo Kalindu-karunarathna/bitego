@@ -1,7 +1,9 @@
 
 import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "expo-router";
 import {
   ActivityIndicator,
+  Alert,
   Image,
   Modal,
   Pressable,
@@ -13,10 +15,9 @@ import {
   View,
 } from "react-native";
 
-import type {
-  CategoryDto,
-  ListingDto,
-} from "@bitego/shared";
+import type { CategoryDto, ListingDto } from "@bitego/shared";
+
+import { createBuyerReservation } from "@/api/reservations";
 
 import {
   fetchDiscoverCategories,
@@ -32,19 +33,16 @@ const COLORS = {
   text: "#29231F",
   muted: "#8B8179",
   border: "#F0E5DA",
-  green: "#347A48",
-  greenLight: "#EAF4E9",
+  subtle: "#F8F1EA",
 };
 
 export default function BusinessBuyScreen() {
   const [categories, setCategories] = useState<CategoryDto[]>([]);
   const [listings, setListings] = useState<ListingDto[]>([]);
-
-  const [selectedCategory, setSelectedCategory] =
-    useState<string | undefined>();
-
+  const [selectedCategory, setSelectedCategory] = useState<
+    string | undefined
+  >();
   const [search, setSearch] = useState("");
-
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -55,7 +53,12 @@ export default function BusinessBuyScreen() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
 
+  const [reservationQuantity, setReservationQuantity] = useState(1);
+  const [reserving, setReserving] = useState(false);
+  const router = useRouter();
+
   // Load categories
+
   useEffect(() => {
     let active = true;
 
@@ -79,6 +82,7 @@ export default function BusinessBuyScreen() {
   }, []);
 
   // Load listings visible to business buyers
+
   const loadListings = useCallback(
     async (isRefresh = false) => {
       if (isRefresh) {
@@ -90,55 +94,25 @@ export default function BusinessBuyScreen() {
       setError(null);
 
       try {
-        const filters = {
+        const result = await fetchDiscoverListings({
           search: search.trim() || undefined,
           categoryId: selectedCategory,
           limit: 50,
-        };
+        });
 
-        // Business buyers can see:
-        // 1. Listings for businesses only
-        // 2. Listings available to everyone
-        const [businessListings, sharedListings] =
-          await Promise.all([
-            fetchDiscoverListings({
-              ...filters,
-              audience: "BUSINESSES_ONLY",
-            }),
-            fetchDiscoverListings({
-              ...filters,
-              audience: "EVERYONE",
-            }),
-          ]);
-
-        // Merge without duplicates and keep the newest first.
-        const uniqueListings = new Map<string, ListingDto>();
-
-        for (const listing of [
-          ...businessListings.items,
-          ...sharedListings.items,
-        ]) {
-          if (
-            listing.audience === "BUSINESSES_ONLY" ||
-            listing.audience === "EVERYONE"
-          ) {
-            uniqueListings.set(listing.id, listing);
-          }
-        }
-
-        const result = Array.from(uniqueListings.values()).sort(
-          (a, b) =>
-            new Date(b.createdAt).getTime() -
-            new Date(a.createdAt).getTime(),
+        const uniqueListings = result.items.filter(
+          (listing) =>
+            listing.audience === "EVERYONE" ||
+            listing.audience === "BUSINESSES_ONLY",
         );
 
         console.log("[BUSINESS BUY]", {
-          businessOnly: businessListings.items.length,
-          everyone: sharedListings.items.length,
-          total: result.length,
+          received: result.items.length,
+          visible: uniqueListings.length,
+          audiences: result.items.map((item) => item.audience),
         });
 
-        setListings(result);
+        setListings(uniqueListings);
       } catch (err) {
         console.error("[BUSINESS BUY ERROR]", err);
 
@@ -156,6 +130,7 @@ export default function BusinessBuyScreen() {
   );
 
   // Reload when search or category changes
+
   useEffect(() => {
     const timer = setTimeout(() => {
       void loadListings();
@@ -164,9 +139,19 @@ export default function BusinessBuyScreen() {
     return () => clearTimeout(timer);
   }, [loadListings]);
 
+  // Get the primary listing image
+
+  const getPrimaryImage = (listing: ListingDto) =>
+    listing.images?.find((image) => image.isPrimary) ??
+    listing.images?.[0];
+
   // Open listing details
+
   const openListingDetails = async (listing: ListingDto) => {
+    if (reserving) return;
+
     setSelectedListing(listing);
+    setReservationQuantity(1);
     setDetailLoading(true);
     setDetailError(null);
 
@@ -186,19 +171,96 @@ export default function BusinessBuyScreen() {
     }
   };
 
+  // Close listing details
+
   const closeDetails = () => {
+    if (reserving) return;
+
     setSelectedListing(null);
     setDetailError(null);
+    setReservationQuantity(1);
+  };
+
+  // Change reservation quantity
+
+  const decreaseQuantity = () => {
+    setReservationQuantity((current) => Math.max(1, current - 1));
+  };
+
+  const increaseQuantity = () => {
+    if (!selectedListing) return;
+
+    setReservationQuantity((current) =>
+      Math.min(selectedListing.quantityAvailable, current + 1),
+    );
+  };
+
+  // Reserve food
+
+  const handleReserve = async () => {
+    if (!selectedListing || reserving || detailLoading) return;
+
+    const quantity = Number(reservationQuantity);
+
+    if (!Number.isInteger(quantity) || quantity < 1) {
+      Alert.alert("Invalid quantity", "Enter a valid quantity.");
+      return;
+    }
+
+    if (quantity > selectedListing.quantityAvailable) {
+      Alert.alert(
+        "Insufficient quantity",
+        `Only ${selectedListing.quantityAvailable} are available.`,
+      );
+      return;
+    }
+
+    if (selectedListing.quantityAvailable < 1) {
+      Alert.alert(
+        "Unavailable",
+        "This listing currently has no available quantity.",
+      );
+      return;
+    }
+
+    setReserving(true);
+
+    try {
+      const reservation = await createBuyerReservation(
+        selectedListing.id,
+        quantity,
+      );
+
+      setSelectedListing(null);
+      setReservationQuantity(1);
+      setDetailError(null);
+
+      Alert.alert(
+        "Reservation successful!",
+        `Your food has been reserved successfully.\n\nPickup code: ${reservation.pickupCode}`,
+      );
+
+      await loadListings(true);
+    } catch (err) {
+      Alert.alert(
+        "Reservation failed",
+        err instanceof Error
+          ? err.message
+          : "Unable to reserve this food. Please try again.",
+      );
+    } finally {
+      setReserving(false);
+    }
   };
 
   // Format price
+
   const formatPrice = (price: number) => {
-    return price === 0
-      ? "FREE"
-      : `Rs. ${price.toLocaleString("en-LK")}`;
+    return price === 0 ? "FREE" : `Rs. ${price.toLocaleString("en-LK")}`;
   };
 
   // Format pickup time
+
   const formatPickupTime = (date: string) => {
     const value = new Date(date);
 
@@ -213,6 +275,7 @@ export default function BusinessBuyScreen() {
   };
 
   // Format pickup date
+
   const formatPickupDate = (date: string) => {
     const value = new Date(date);
 
@@ -226,6 +289,8 @@ export default function BusinessBuyScreen() {
       year: "numeric",
     });
   };
+
+  // Get audience label
 
   const getAudienceLabel = (audience: ListingDto["audience"]) => {
     return audience === "BUSINESSES_ONLY"
@@ -248,13 +313,12 @@ export default function BusinessBuyScreen() {
         contentContainerStyle={styles.content}
       >
         {/* Header */}
+
         <View style={styles.header}>
           <View style={styles.headerText}>
             <Text style={styles.eyebrow}>BITEGO BUSINESS</Text>
 
-            <Text style={styles.heading}>
-              Buy good food.
-            </Text>
+            <Text style={styles.heading}>Buy good food.</Text>
 
             <Text style={styles.subtitle}>
               Discover available food from other businesses.
@@ -266,16 +330,24 @@ export default function BusinessBuyScreen() {
           </View>
         </View>
 
-        {/* Visibility information */}
-        <View style={styles.infoBanner}>
-          <Text style={styles.infoIcon}>✓</Text>
+        {/* My Reservations */}
 
-          <Text style={styles.infoText}>
-            Showing listings available to business buyers.
+        <Pressable
+          onPress={() => router.push("/(business)/buy/reservations")}
+          style={({ pressed }) => [
+            styles.reservationsButton,
+            pressed && styles.buttonPressed,
+          ]}
+        >
+          <Text style={styles.reservationsButtonText}>
+            My Reservations
           </Text>
-        </View>
+
+          <Text style={styles.reservationsButtonArrow}>→</Text>
+        </Pressable>
 
         {/* Search */}
+
         <View style={styles.searchContainer}>
           <Text style={styles.searchIcon}>⌕</Text>
 
@@ -297,10 +369,9 @@ export default function BusinessBuyScreen() {
         </View>
 
         {/* Categories */}
+
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>
-            Categories
-          </Text>
+          <Text style={styles.sectionTitle}>Categories</Text>
 
           <ScrollView
             horizontal
@@ -355,12 +426,11 @@ export default function BusinessBuyScreen() {
         </View>
 
         {/* Listings */}
+
         <View style={styles.section}>
           <View style={styles.listingHeader}>
             <View>
-              <Text style={styles.sectionTitle}>
-                Available food
-              </Text>
+              <Text style={styles.sectionTitle}>Available food</Text>
 
               <Text style={styles.sectionSubtitle}>
                 Food offered by other businesses
@@ -376,10 +446,7 @@ export default function BusinessBuyScreen() {
 
           {loading ? (
             <View style={styles.stateContainer}>
-              <ActivityIndicator
-                size="large"
-                color={COLORS.orange}
-              />
+              <ActivityIndicator size="large" color={COLORS.orange} />
 
               <Text style={styles.stateText}>
                 Finding available food...
@@ -387,34 +454,26 @@ export default function BusinessBuyScreen() {
             </View>
           ) : error ? (
             <View style={styles.stateContainer}>
-              <Text style={styles.stateTitle}>
-                Something went wrong
-              </Text>
+              <Text style={styles.stateTitle}>Something went wrong</Text>
 
-              <Text style={styles.stateText}>
-                {error}
-              </Text>
+              <Text style={styles.stateText}>{error}</Text>
 
               <Pressable
                 style={styles.retryButton}
                 onPress={() => void loadListings()}
               >
-                <Text style={styles.retryText}>
-                  Try again
-                </Text>
+                <Text style={styles.retryText}>Try again</Text>
               </Pressable>
             </View>
           ) : listings.length === 0 ? (
             <View style={styles.stateContainer}>
               <Text style={styles.emptyEmoji}>🍱</Text>
 
-              <Text style={styles.stateTitle}>
-                No food available
-              </Text>
+              <Text style={styles.stateTitle}>No food available</Text>
 
               <Text style={styles.stateText}>
-                No listings match your search right now.
-                Try another category or search term.
+                No listings match your search right now. Try another category
+                or search term.
               </Text>
 
               <Pressable
@@ -423,23 +482,21 @@ export default function BusinessBuyScreen() {
                   setSelectedCategory(undefined);
                 }}
               >
-                <Text style={styles.resetText}>
-                  Clear filters
-                </Text>
+                <Text style={styles.resetText}>Clear filters</Text>
               </Pressable>
             </View>
           ) : (
             <View style={styles.foodList}>
               {listings.map((listing) => {
-                const primaryImage =
-                  listing.images.find(
-                    (image) => image.isPrimary,
-                  ) ?? listing.images[0];
+                const primaryImage = getPrimaryImage(listing);
 
                 return (
                   <Pressable
                     key={listing.id}
-                    style={styles.foodCard}
+                    style={({ pressed }) => [
+                      styles.foodCard,
+                      pressed && styles.cardPressed,
+                    ]}
                     onPress={() => void openListingDetails(listing)}
                     accessibilityRole="button"
                     accessibilityLabel={`View ${listing.title} details`}
@@ -450,12 +507,16 @@ export default function BusinessBuyScreen() {
                           source={{ uri: primaryImage.imageUrl }}
                           style={styles.foodImage}
                           resizeMode="cover"
+                          onError={() =>
+                            console.warn(
+                              "[BUSINESS BUY IMAGE ERROR]",
+                              primaryImage.imageUrl,
+                            )
+                          }
                         />
                       ) : (
                         <View style={styles.imagePlaceholder}>
-                          <Text style={styles.placeholderEmoji}>
-                            🍱
-                          </Text>
+                          <Text style={styles.placeholderEmoji}>🍱</Text>
                         </View>
                       )}
 
@@ -468,18 +529,12 @@ export default function BusinessBuyScreen() {
 
                     <View style={styles.foodDetails}>
                       <View style={styles.cardTitleRow}>
-                        <Text
-                          numberOfLines={1}
-                          style={styles.foodName}
-                        >
+                        <Text numberOfLines={1} style={styles.foodName}>
                           {listing.title}
                         </Text>
                       </View>
 
-                      <Text
-                        numberOfLines={1}
-                        style={styles.shopName}
-                      >
+                      <Text numberOfLines={1} style={styles.shopName}>
                         {listing.business.name}
                       </Text>
 
@@ -495,17 +550,14 @@ export default function BusinessBuyScreen() {
                         {listing.originalPrice > listing.price && (
                           <Text style={styles.originalPrice}>
                             Rs.{" "}
-                            {listing.originalPrice.toLocaleString(
-                              "en-LK",
-                            )}
+                            {listing.originalPrice.toLocaleString("en-LK")}
                           </Text>
                         )}
                       </View>
 
                       <View style={styles.cardFooter}>
                         <Text style={styles.pickupText}>
-                          Pickup until{" "}
-                          {formatPickupTime(listing.pickupEnd)}
+                          Pickup until {formatPickupTime(listing.pickupEnd)}
                         </Text>
 
                         <Text style={styles.viewDetails}>
@@ -527,7 +579,7 @@ export default function BusinessBuyScreen() {
         </View>
 
         <View style={styles.bottomNote}>
-          <Text style={styles.bottomNoteEmoji}>💚</Text>
+          <Text style={styles.bottomNoteEmoji}>🧡</Text>
 
           <Text style={styles.bottomNoteText}>
             Better food choices for every business.
@@ -536,6 +588,7 @@ export default function BusinessBuyScreen() {
       </ScrollView>
 
       {/* Listing details modal */}
+
       <Modal
         visible={selectedListing !== null}
         animationType="slide"
@@ -545,25 +598,21 @@ export default function BusinessBuyScreen() {
         <View style={styles.modalOverlay}>
           <View style={styles.modalContainer}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalHeading}>
-                Listing details
-              </Text>
+              <Text style={styles.modalHeading}>Listing details</Text>
 
-              <Pressable onPress={closeDetails}>
+              <Pressable
+                onPress={closeDetails}
+                disabled={reserving}
+              >
                 <Text style={styles.modalClose}>×</Text>
               </Pressable>
             </View>
 
             {detailLoading ? (
               <View style={styles.stateContainer}>
-                <ActivityIndicator
-                  size="large"
-                  color={COLORS.orange}
-                />
+                <ActivityIndicator size="large" color={COLORS.orange} />
 
-                <Text style={styles.stateText}>
-                  Loading details...
-                </Text>
+                <Text style={styles.stateText}>Loading details...</Text>
               </View>
             ) : detailError ? (
               <View style={styles.stateContainer}>
@@ -571,19 +620,22 @@ export default function BusinessBuyScreen() {
                   Could not load details
                 </Text>
 
-                <Text style={styles.stateText}>
-                  {detailError}
-                </Text>
+                <Text style={styles.stateText}>{detailError}</Text>
+
+                <Pressable
+                  style={styles.closeButton}
+                  onPress={closeDetails}
+                >
+                  <Text style={styles.closeButtonText}>Close details</Text>
+                </Pressable>
               </View>
             ) : selectedListing ? (
               <ScrollView
                 showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
               >
                 {(() => {
-                  const image =
-                    selectedListing.images.find(
-                      (item) => item.isPrimary,
-                    ) ?? selectedListing.images[0];
+                  const image = getPrimaryImage(selectedListing);
 
                   return image?.imageUrl ? (
                     <Image
@@ -621,18 +673,14 @@ export default function BusinessBuyScreen() {
 
                   <View style={styles.detailDivider} />
 
-                  <Text style={styles.detailLabel}>
-                    Description
-                  </Text>
+                  <Text style={styles.detailLabel}>Description</Text>
 
                   <Text style={styles.detailText}>
                     {selectedListing.description ||
                       "No description provided."}
                   </Text>
 
-                  <Text style={styles.detailLabel}>
-                    Category
-                  </Text>
+                  <Text style={styles.detailLabel}>Category</Text>
 
                   <Text style={styles.detailText}>
                     {selectedListing.category.name}
@@ -647,9 +695,7 @@ export default function BusinessBuyScreen() {
                     {selectedListing.unit.toLowerCase()}
                   </Text>
 
-                  <Text style={styles.detailLabel}>
-                    Pickup period
-                  </Text>
+                  <Text style={styles.detailLabel}>Pickup period</Text>
 
                   <Text style={styles.detailText}>
                     {formatPickupDate(selectedListing.pickupStart)}
@@ -671,9 +717,7 @@ export default function BusinessBuyScreen() {
                     </>
                   )}
 
-                  <Text style={styles.detailLabel}>
-                    Business address
-                  </Text>
+                  <Text style={styles.detailLabel}>Business address</Text>
 
                   <Text style={styles.detailText}>
                     {selectedListing.business.addressLine},{" "}
@@ -683,17 +727,97 @@ export default function BusinessBuyScreen() {
                       : ""}
                   </Text>
 
-                  <Text style={styles.detailLabel}>
-                    Available to
-                  </Text>
+                  <Text style={styles.detailLabel}>Available to</Text>
 
                   <Text style={styles.detailText}>
                     {getAudienceLabel(selectedListing.audience)}
                   </Text>
 
+                  <View style={styles.detailDivider} />
+
+                  {/* Reservation quantity */}
+
+                  <Text style={styles.detailLabel}>
+                    Reservation quantity
+                  </Text>
+
+                  <View style={styles.quantitySelector}>
+                    <Pressable
+                      style={[
+                        styles.quantityButton,
+                        reservationQuantity <= 1 &&
+                          styles.quantityButtonDisabled,
+                      ]}
+                      onPress={decreaseQuantity}
+                      disabled={reservationQuantity <= 1 || reserving}
+                    >
+                      <Text style={styles.quantityButtonText}>−</Text>
+                    </Pressable>
+
+                    <Text style={styles.quantityValue}>
+                      {reservationQuantity}
+                    </Text>
+
+                    <Pressable
+                      style={[
+                        styles.quantityButton,
+                        reservationQuantity >=
+                          selectedListing.quantityAvailable &&
+                          styles.quantityButtonDisabled,
+                      ]}
+                      onPress={increaseQuantity}
+                      disabled={
+                        reserving ||
+                        reservationQuantity >=
+                          selectedListing.quantityAvailable
+                      }
+                    >
+                      <Text style={styles.quantityButtonText}>+</Text>
+                    </Pressable>
+                  </View>
+
+                  {/* Total price */}
+
+                  <View style={styles.totalRow}>
+                    <Text style={styles.totalLabel}>Total price</Text>
+
+                    <Text style={styles.totalPrice}>
+                      {formatPrice(
+                        selectedListing.price * reservationQuantity,
+                      )}
+                    </Text>
+                  </View>
+
+                  {/* Reserve button */}
+
+                  <Pressable
+                    style={[
+                      styles.reserveButton,
+                      (reserving ||
+                        selectedListing.quantityAvailable < 1) &&
+                        styles.reserveButtonDisabled,
+                    ]}
+                    onPress={() => void handleReserve()}
+                    disabled={
+                      reserving ||
+                      selectedListing.quantityAvailable < 1
+                    }
+                  >
+                    {reserving ? (
+                      <ActivityIndicator color="#FFFFFF" />
+                    ) : (
+                      <Text style={styles.reserveButtonText}>
+                        {selectedListing.quantityAvailable < 1
+                          ? "Currently unavailable"
+                          : "Reserve food"}
+                      </Text>
+                    )}
+                  </Pressable>
+
                   <Pressable
                     style={styles.closeButton}
                     onPress={closeDetails}
+                    disabled={reserving}
                   >
                     <Text style={styles.closeButtonText}>
                       Close details
@@ -717,7 +841,7 @@ const styles = StyleSheet.create({
 
   content: {
     paddingHorizontal: 20,
-    paddingTop: 18,
+    paddingTop: 22,
     paddingBottom: 36,
   },
 
@@ -725,7 +849,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 20,
+    marginBottom: 25,
   },
 
   headerText: {
@@ -734,73 +858,82 @@ const styles = StyleSheet.create({
 
   eyebrow: {
     color: COLORS.orange,
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: "800",
-    letterSpacing: 2,
-    marginBottom: 7,
+    letterSpacing: 2.2,
+    marginBottom: 9,
   },
 
   heading: {
     color: COLORS.text,
-    fontSize: 25,
+    fontSize: 30,
     fontWeight: "800",
+    letterSpacing: -0.9,
   },
 
   subtitle: {
     color: COLORS.muted,
     fontSize: 13,
-    marginTop: 5,
+    lineHeight: 20,
+    marginTop: 7,
   },
 
   headerIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 16,
-    backgroundColor: COLORS.surface,
+    width: 54,
+    height: 54,
+    borderRadius: 19,
+    backgroundColor: COLORS.orangeLight,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: "#F9DCC8",
     alignItems: "center",
     justifyContent: "center",
     marginLeft: 10,
   },
 
   headerEmoji: {
-    fontSize: 24,
+    fontSize: 26,
   },
 
-  infoBanner: {
+  reservationsButton: {
+    backgroundColor: COLORS.orangeLight,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 15,
+    paddingHorizontal: 17,
+    paddingVertical: 14,
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: COLORS.greenLight,
-    padding: 13,
-    borderRadius: 14,
-    marginBottom: 20,
-    gap: 9,
+    justifyContent: "space-between",
+    marginBottom: 19,
   },
 
-  infoIcon: {
-    color: COLORS.green,
-    fontSize: 17,
+  reservationsButtonText: {
+    color: COLORS.orange,
+    fontSize: 14,
     fontWeight: "800",
   },
 
-  infoText: {
-    flex: 1,
-    color: COLORS.green,
-    fontSize: 12,
-    fontWeight: "600",
+  reservationsButtonArrow: {
+    color: COLORS.orange,
+    fontSize: 18,
+    fontWeight: "700",
   },
 
   searchContainer: {
     height: 54,
     backgroundColor: COLORS.surface,
-    borderRadius: 17,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: COLORS.border,
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 15,
-    marginBottom: 25,
+    paddingHorizontal: 16,
+    marginBottom: 27,
+    shadowColor: "#8B8179",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 2,
   },
 
   searchIcon: {
@@ -847,9 +980,9 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.surface,
     borderWidth: 1,
     borderColor: COLORS.border,
-    borderRadius: 22,
+    borderRadius: 18,
     paddingHorizontal: 17,
-    paddingVertical: 11,
+    paddingVertical: 10,
   },
 
   categoryChipSelected: {
@@ -885,14 +1018,19 @@ const styles = StyleSheet.create({
 
   foodCard: {
     backgroundColor: COLORS.surface,
-    borderRadius: 19,
+    borderRadius: 20,
     overflow: "hidden",
     borderWidth: 1,
     borderColor: COLORS.border,
+    shadowColor: "#6B5140",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.055,
+    shadowRadius: 8,
+    elevation: 2,
   },
 
   imageContainer: {
-    height: 175,
+    height: 190,
     backgroundColor: COLORS.orangeLight,
   },
 
@@ -913,22 +1051,24 @@ const styles = StyleSheet.create({
 
   quantityBadge: {
     position: "absolute",
-    top: 12,
-    left: 12,
-    backgroundColor: COLORS.greenLight,
+    top: 13,
+    left: 13,
+    backgroundColor: COLORS.orangeLight,
     borderRadius: 12,
-    paddingHorizontal: 11,
-    paddingVertical: 7,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: "#F9DCC8",
   },
 
   quantityText: {
-    color: COLORS.green,
+    color: COLORS.orange,
     fontSize: 11,
     fontWeight: "800",
   },
 
   foodDetails: {
-    padding: 15,
+    padding: 18,
   },
 
   cardTitleRow: {
@@ -941,12 +1081,13 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     fontSize: 17,
     fontWeight: "800",
+    lineHeight: 23,
   },
 
   shopName: {
     color: COLORS.muted,
     fontSize: 13,
-    marginTop: 5,
+    marginTop: 6,
   },
 
   categoryName: {
@@ -965,7 +1106,7 @@ const styles = StyleSheet.create({
 
   foodPrice: {
     color: COLORS.orange,
-    fontSize: 19,
+    fontSize: 22,
     fontWeight: "800",
   },
 
@@ -979,7 +1120,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginTop: 13,
+    marginTop: 15,
+    flexWrap: "wrap",
+    gap: 8,
   },
 
   pickupText: {
@@ -995,42 +1138,50 @@ const styles = StyleSheet.create({
 
   audienceBadge: {
     alignSelf: "flex-start",
-    backgroundColor: COLORS.greenLight,
+    backgroundColor: COLORS.subtle,
     borderRadius: 10,
-    paddingHorizontal: 9,
-    paddingVertical: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
     marginTop: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
   },
 
   audienceText: {
-    color: COLORS.green,
+    color: COLORS.muted,
     fontSize: 10,
     fontWeight: "700",
   },
 
   stateContainer: {
-    minHeight: 190,
+    minHeight: 245,
     backgroundColor: COLORS.surface,
-    borderRadius: 18,
+    borderRadius: 22,
     borderWidth: 1,
     borderColor: COLORS.border,
     alignItems: "center",
     justifyContent: "center",
-    padding: 22,
-    gap: 10,
+    paddingHorizontal: 27,
+    paddingVertical: 30,
+    gap: 12,
+    shadowColor: "#6B5140",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 2,
   },
 
   stateTitle: {
     color: COLORS.text,
-    fontSize: 16,
-    fontWeight: "700",
+    fontSize: 18,
+    fontWeight: "800",
   },
 
   stateText: {
     color: COLORS.muted,
     fontSize: 13,
     textAlign: "center",
-    lineHeight: 19,
+    lineHeight: 21,
   },
 
   retryButton: {
@@ -1047,13 +1198,15 @@ const styles = StyleSheet.create({
   },
 
   emptyEmoji: {
-    fontSize: 38,
+    fontSize: 47,
+    marginBottom: 3,
   },
 
   resetText: {
     color: COLORS.orange,
-    fontWeight: "700",
-    marginTop: 5,
+    fontWeight: "800",
+    fontSize: 13,
+    marginTop: 7,
   },
 
   bottomNote: {
@@ -1061,16 +1214,18 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
-    paddingVertical: 12,
+    paddingVertical: 15,
+    marginTop: 2,
   },
 
   bottomNoteEmoji: {
-    fontSize: 15,
+    fontSize: 16,
   },
 
   bottomNoteText: {
     color: COLORS.muted,
     fontSize: 12,
+    fontWeight: "500",
   },
 
   modalOverlay: {
@@ -1081,9 +1236,9 @@ const styles = StyleSheet.create({
 
   modalContainer: {
     backgroundColor: COLORS.background,
-    height: "88%",
-    borderTopLeftRadius: 25,
-    borderTopRightRadius: 25,
+    height: "90%",
+    borderTopLeftRadius: 26,
+    borderTopRightRadius: 26,
     overflow: "hidden",
   },
 
@@ -1123,7 +1278,7 @@ const styles = StyleSheet.create({
   },
 
   detailContent: {
-    padding: 20,
+    padding: 21,
     paddingBottom: 35,
   },
 
@@ -1172,6 +1327,85 @@ const styles = StyleSheet.create({
     lineHeight: 21,
   },
 
+  quantitySelector: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 22,
+    marginVertical: 12,
+  },
+
+  quantityButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 13,
+    backgroundColor: COLORS.orangeLight,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+
+  quantityButtonDisabled: {
+    opacity: 0.4,
+  },
+
+  quantityButtonText: {
+    color: COLORS.orange,
+    fontSize: 23,
+    fontWeight: "800",
+  },
+
+  quantityValue: {
+    color: COLORS.text,
+    fontSize: 18,
+    fontWeight: "800",
+    minWidth: 24,
+    textAlign: "center",
+  },
+
+  totalRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    backgroundColor: COLORS.orangeLight,
+    borderRadius: 14,
+    paddingHorizontal: 15,
+    paddingVertical: 14,
+    marginTop: 12,
+  },
+
+  totalLabel: {
+    color: COLORS.text,
+    fontSize: 14,
+    fontWeight: "700",
+  },
+
+  totalPrice: {
+    color: COLORS.orange,
+    fontSize: 19,
+    fontWeight: "800",
+  },
+
+  reserveButton: {
+    backgroundColor: COLORS.orange,
+    borderRadius: 15,
+    paddingVertical: 15,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 20,
+    minHeight: 50,
+  },
+
+  reserveButtonDisabled: {
+    opacity: 0.55,
+  },
+
+  reserveButtonText: {
+    color: "#FFFFFF",
+    fontSize: 15,
+    fontWeight: "800",
+  },
+
   closeButton: {
     backgroundColor: COLORS.orange,
     borderRadius: 15,
@@ -1185,4 +1419,14 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "800",
   },
+
+  buttonPressed: {
+    opacity: 0.75,
+    transform: [{ scale: 0.99 }],
+  },
+
+  cardPressed: {
+    opacity: 0.92,
+  },
 });
+ 
