@@ -1,16 +1,12 @@
 import { discoveryFiltersSchema } from "@bitego/shared";
 
 import { ok, route } from "@/lib/http";
-import { requireRole } from "@/server/middleware/auth";
+import { requireBuyer } from "@/server/modules/buyer/buyer-auth";
 import { discoverListings } from "@/server/modules/discovery/discovery.service";
 
 // GET /api/v1/listings
 export const GET = route(async (req) => {
-  const { user } = await requireRole(
-    req,
-    "CUSTOMER",
-    "BUSINESS",
-  );
+  const { user } = await requireBuyer(req);
 
   const filters = discoveryFiltersSchema.parse(
     Object.fromEntries(

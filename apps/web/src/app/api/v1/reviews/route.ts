@@ -1,6 +1,6 @@
 import { createReviewSchema } from "@bitego/shared";
 import { ok, parseBody, route } from "@/lib/http";
-import { requireRole } from "@/server/middleware/auth";
+import { requireBuyer } from "@/server/modules/buyer/buyer-auth";
 import {
   createReview,
   getBuyerReviewedReservationIds,
@@ -9,7 +9,7 @@ import {
 // GET /api/v1/reviews
 // Get reservation IDs already reviewed by the current buyer.
 export const GET = route(async (req) => {
-  const { user } = await requireRole(req, "CUSTOMER", "BUSINESS");
+  const { user } = await requireBuyer(req);
 
   const reservationIds = await getBuyerReviewedReservationIds(user);
 
@@ -19,7 +19,7 @@ export const GET = route(async (req) => {
 // POST /api/v1/reviews
 // Submit a review after successful pickup.
 export const POST = route(async (req) => {
-  const { user } = await requireRole(req, "CUSTOMER", "BUSINESS");
+  const { user } = await requireBuyer(req);
 
   const input = await parseBody(req, createReviewSchema);
 

@@ -4,6 +4,7 @@ import type {
   DiscoveryResponse,
   ListingDto,
 } from "@bitego/shared";
+
 import { apiFetch } from "@/api/client";
 
 export type DiscoverFilters = {
@@ -11,6 +12,7 @@ export type DiscoverFilters = {
   categoryId?: string;
   minPrice?: number;
   maxPrice?: number;
+  audience?: "CUSTOMERS_ONLY" | "BUSINESSES_ONLY" | "EVERYONE";
   latitude?: number;
   longitude?: number;
   radiusKm?: number;
@@ -38,7 +40,10 @@ export async function fetchDiscoverListings(
     params.set("maxPrice", String(filters.maxPrice));
   }
 
-  // Buyer location
+  if (filters.audience) {
+    params.set("audience", filters.audience);
+  }
+
   if (filters.latitude !== undefined) {
     params.set("latitude", String(filters.latitude));
   }
@@ -47,7 +52,6 @@ export async function fetchDiscoverListings(
     params.set("longitude", String(filters.longitude));
   }
 
-  // Optional distance radius
   if (filters.radiusKm !== undefined) {
     params.set("radiusKm", String(filters.radiusKm));
   }
