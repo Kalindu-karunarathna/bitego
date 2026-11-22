@@ -127,3 +127,68 @@ export type AuditLogPage = {
   nextCursor: string | null; // send it back as ?cursor= to get the next page
   actions: string[]; // every action name that exists, for the filter
 };
+
+// ───────────────────────────── Reports ─────────────────────────────
+// A user reports a food listing (POST /reports). An admin reviews it (/admin/reports).
+
+// Must match enum ReportType / ReportStatus in apps/web/prisma/schema.prisma.
+export const REPORT_TYPES = ["QUALITY_SAFETY", "FAKE", "INAPPROPRIATE", "SPAM", "OTHER"] as const;
+export type ReportTypeName = (typeof REPORT_TYPES)[number];
+
+export const REPORT_TYPE_LABELS: Record<ReportTypeName, string> = {
+  QUALITY_SAFETY: "Unsafe or bad quality food",
+  FAKE: "Fake or misleading listing",
+  INAPPROPRIATE: "Inappropriate content",
+  SPAM: "Spam",
+  OTHER: "Something else",
+};
+
+export const REPORT_STATUSES = ["PENDING", "REVIEWED", "RESOLVED", "REJECTED"] as const;
+export type ReportStatusName = (typeof REPORT_STATUSES)[number];
+
+export const REPORT_STATUS_FILTERS = ["PENDING", "RESOLVED", "REJECTED", "ALL"] as const;
+export type ReportStatusFilter = (typeof REPORT_STATUS_FILTERS)[number];
+
+// POST /reports
+export const createReportSchema = z.object({
+  listingId: z.uuid(),
+  type: z.enum(REPORT_TYPES),
+  description: z.string().trim().max(500).optional(),
+});
+export type CreateReportInput = z.infer<typeof createReportSchema>;
+
+// POST /admin/reports/:id/review
+//   DISMISS        the report is wrong or harmless          -> REJECTED
+//   RESOLVE        handled, nothing to change on the listing -> RESOLVED
+//   HIDE_LISTING   cancel the listing (its reservations are cancelled)  -> RESOLVED
+//   BLOCK_BUSINESS suspend the business, block its owner, cancel its open listings -> RESOLVED
+export const REPORT_ACTIONS = ["DISMISS", "RESOLVE", "HIDE_LISTING", "BLOCK_BUSINESS"] as const;
+export type ReportAction = (typeof REPORT_ACTIONS)[number];
+
+export const reviewReportSchema = z.object({
+  action: z.enum(REPORT_ACTIONS),
+  note: z.string().trim().max(500).optional(),
+});
+export type ReviewReportInput = z.infer<typeof reviewReportSchema>;
+
+// GET /admin/reports
+export type AdminReportDto = {
+  id: string;
+  type: ReportTypeName;
+  description: string | null;
+  status: ReportStatusName;
+  createdAt: string;
+  reviewedAt: string | null;
+  adminNote: string | null;
+  reviewedByName: string | null;
+  /** How many reports (any status) this listing has received. */
+  listingReportCount: number;
+  reporter: { id: string; fullName: string; email: string };
+  listing: {
+    id: string;
+    title: string;
+    status: string;
+    imageUrl: string | null;
+    business: { id: string; name: string; status: string; ownerId: string; ownerStatus: string };
+  };
+};
