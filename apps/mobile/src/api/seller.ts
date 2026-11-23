@@ -1,3 +1,4 @@
+import { File } from "expo-file-system";
 import { Platform } from "react-native";
 import type {
   ActivityPeriod,
@@ -56,8 +57,7 @@ export async function uploadListingPhoto(photo: { uri: string; mimeType?: string
   if (Platform.OS === "web") {
     form.append("file", await (await fetch(photo.uri)).blob());
   } else {
-    const file = { uri: photo.uri, name: `photo.${EXTENSIONS[contentType]}`, type: contentType };
-    form.append("file", file as unknown as Blob);
+    form.append("file", new File(photo.uri) as unknown as Blob);
   }
 
   const controller = new AbortController();
