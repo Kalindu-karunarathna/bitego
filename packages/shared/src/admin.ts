@@ -1,5 +1,6 @@
 import { z } from "zod";
-import type { BusinessStatus, BusinessType, Role } from "./constants";
+import { RESERVATION_STATUSES } from "./constants";
+import type { BusinessStatus, BusinessType, ReservationStatus, Role } from "./constants";
 import type { VerificationStatus } from "./api-types";
 
 // Types and schemas for the admin API (/api/v1/admin/*). Owner: Kalindu.
@@ -191,4 +192,32 @@ export type AdminReportDto = {
     imageUrl: string | null;
     business: { id: string; name: string; status: string; ownerId: string; ownerStatus: string };
   };
+};
+
+// ───────────────────────── Reservations overview ─────────────────────────
+// Read-only list for admins (disputes, demo). GET /admin/reservations
+
+// RESERVATION_STATUSES / ReservationStatus come from constants.ts.
+export const RESERVATION_STATUS_FILTERS = ["ALL", ...RESERVATION_STATUSES] as const;
+export type ReservationStatusFilter = (typeof RESERVATION_STATUS_FILTERS)[number];
+
+export type AdminReservationDto = {
+  id: string;
+  status: ReservationStatus;
+  quantity: number;
+  totalPrice: number;
+  pickupCode: string;
+  createdAt: string;
+  pickedUpAt: string | null;
+  cancelledAt: string | null;
+  cancelReason: string | null;
+  buyer: { id: string; fullName: string; email: string };
+  listing: { id: string; title: string; business: { id: string; name: string } };
+};
+
+export type AdminReservationPage = {
+  items: AdminReservationDto[];
+  nextCursor: string | null; // send it back as ?cursor= to get the next page
+  /** How many reservations exist per status (ignores the search box). */
+  counts: Record<ReservationStatusFilter, number>;
 };
