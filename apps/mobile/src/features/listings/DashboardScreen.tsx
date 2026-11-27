@@ -57,7 +57,7 @@ export function DashboardScreen() {
     .sort((a, b) => new Date(a.pickupEnd).getTime() - new Date(b.pickupEnd).getTime())[0];
   const recent = orders.slice().sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 3);
 
-  const goQuick = () => router.push("/sell/quick");
+  const goNew = () => router.push("/sell/new");
 
   return (
     <View style={styles.flex}>
@@ -109,7 +109,7 @@ export function DashboardScreen() {
                 onPress={() => router.push("/sell/activity")}
               />
 
-              <Pressable accessibilityRole="button" onPress={goQuick} style={({ pressed }) => [styles.quickWrap, pressed && styles.pressed]}>
+              <Pressable accessibilityRole="button" onPress={goNew} style={({ pressed }) => [styles.quickWrap, pressed && styles.pressed]}>
                 <Gradient stops={[[color.primaryDeep], [color.mid]]} style={styles.quick}>
                   <View style={styles.quickIcon}><Icon name="sparkles" size={24} color="#fff" /></View>
                   <View style={styles.flex}>
@@ -120,9 +120,6 @@ export function DashboardScreen() {
                   <Icon name="arrow" size={20} color="#fff" />
                 </Gradient>
               </Pressable>
-              <View style={styles.centerLink}>
-                <TextLink title="Create detailed listing" icon="plus" onPress={() => router.push("/sell/new")} />
-              </View>
 
               <SectionHeading title="Ending soon" subtitle="Act before these pickup windows close" action={<Badge label="Time sensitive" tone="orange" icon="clock" />} />
               {ending ? (
@@ -183,7 +180,7 @@ export function DashboardScreen() {
         </View>
       </Page>
 
-      <Pressable accessibilityRole="button" accessibilityLabel="Quick listing" onPress={goQuick} style={({ pressed }) => [styles.fab, pressed && styles.pressed]}>
+      <Pressable accessibilityRole="button" accessibilityLabel="Post surplus food" onPress={goNew} style={({ pressed }) => [styles.fab, pressed && styles.pressed]}>
         <Icon name="plus" size={26} color="#fff" />
       </Pressable>
     </View>
@@ -218,13 +215,12 @@ const styles = StyleSheet.create({
   metricLabel: { fontSize: 13, fontWeight: "700", color: color.text, marginTop: 1 },
   metricMeta: { fontSize: 11, color: color.muted, marginTop: 4 },
   metricGo: { width: 40, height: 40, borderRadius: 20, backgroundColor: "#FFE0CC", alignItems: "center", justifyContent: "center" },
-  quickWrap: { marginTop: 16, borderRadius: 18, ...shadow, shadowOpacity: 0.12 },
+  quickWrap: { marginTop: 16, marginBottom: 24, borderRadius: 18, ...shadow, shadowOpacity: 0.12 },
   quick: { borderRadius: 18, padding: 15, flexDirection: "row", alignItems: "center", gap: 12 },
   quickIcon: { width: 46, height: 46, borderRadius: 14, backgroundColor: "rgba(255,255,255,0.16)", alignItems: "center", justifyContent: "center" },
   quickTag: { alignSelf: "flex-start", fontSize: 10, fontWeight: "800", letterSpacing: 0.8, color: color.primaryDark, backgroundColor: "#FFD2AB", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, overflow: "hidden" },
   quickTitle: { fontSize: 15, fontWeight: "800", color: "#fff", marginTop: 7 },
   quickSub: { fontSize: 11, color: "rgba(255,255,255,0.78)", marginTop: 4 },
-  centerLink: { alignItems: "center", marginTop: 6, marginBottom: 20 },
   endingCard: { flexDirection: "row", alignItems: "center", gap: 11, padding: 10, borderRadius: 17, borderWidth: 1, borderColor: color.amberBorder, backgroundColor: color.amberSoft, marginBottom: 24 },
   endingImage: { width: 74, height: 78, borderRadius: 12 },
   endingText: { flex: 1, minWidth: 0, gap: 4, alignItems: "flex-start" },
