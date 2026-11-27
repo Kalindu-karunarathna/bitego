@@ -1,6 +1,6 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import type { ImagePickerAsset } from "expo-image-picker";
 import {
   createListingSchema,
@@ -26,7 +26,7 @@ import {
 import { toFieldErrors } from "@/features/auth/formErrors";
 import { color, formatDay, formatMoney, formatPrice, formatQuantity, formatTime, savePercent } from "./design";
 import { Icon } from "./Icon";
-import { apiFieldErrors, AppHeader, Badge, Btn, Chips, errorMessage, Field, FormBlock, FormError, LoadError, Note, Page, SkeletonCards, FoodImage } from "./kit";
+import { apiFieldErrors, AppHeader, Badge, Btn, Chips, errorMessage, Field, FoodImage, FormBlock, FormError, LoadError, Note, Page, SkeletonCards, TextLink } from "./kit";
 import { PhotoPicker, type PhotoItem } from "./PhotoPicker";
 import {
   AUDIENCES,
@@ -45,7 +45,11 @@ import {
 
 const UNIT_LABELS: Record<QuantityUnit, string> = { PORTION: "Portions", PIECE: "Pieces", PACK: "Packs", KG: "Kg" };
 
-// The detailed listing form (design: "Create surplus listing"), then a customer preview, then "Listing published!".
+// Fields inside "More options". An error on one of them opens the section so the seller can see it.
+const MORE_FIELDS = ["description", "unit", "audience", "pickupNote"];
+
+// The one listing form. The essentials are always shown; description, unit, audience and pickup note
+// sit in a "More options" section that starts closed. Publish straight away, or preview first.
 // With a listing id it edits instead; photos then save immediately.
 export function ListingFormScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
@@ -60,7 +64,7 @@ export function ListingFormScreen() {
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [quantity, setQuantity] = useState("");
   const [unit, setUnit] = useState<QuantityUnit>("PORTION");
-  const [priceType, setPriceType] = useState<PriceType>("discounted");
+  const [priceType, setPriceType] = useState<PriceType>("free");
   const [price, setPrice] = useState("");
   const [originalPrice, setOriginalPrice] = useState("");
   const [start, setStart] = useState(nextQuarterHour);
@@ -68,6 +72,7 @@ export function ListingFormScreen() {
   const [pickupNote, setPickupNote] = useState("");
   const [audience, setAudience] = useState<ListingAudience>("EVERYONE");
   const [photos, setPhotos] = useState<PhotoItem[]>([]);
+  const [moreOpen, setMoreOpen] = useState(false);
 
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
@@ -97,6 +102,8 @@ export function ListingFormScreen() {
         setPickupNote(listing.pickupNote ?? "");
         setAudience(listing.audience);
         setPhotos(listing.images.map((i) => ({ id: i.id, uri: i.imageUrl })));
+        // Show the extra options when this listing already uses them.
+        setMoreOpen(!!listing.description || !!listing.pickupNote || listing.unit !== "PORTION" || listing.audience !== "EVERYONE");
       }
     } catch (err) {
       setLoadError(errorMessage(err));
@@ -135,6 +142,11 @@ export function ListingFormScreen() {
     }
   };
 
+  function showErrors(next: Record<string, string>) {
+    setErrors(next);
+    if (Object.keys(next).some((k) => MORE_FIELDS.includes(k))) setMoreOpen(true);
+  }
+
   function validate(): CreateListingInput | null {
     setFormError(null);
     const parsed = createListingSchema.safeParse({
@@ -151,13 +163,13 @@ export function ListingFormScreen() {
       imageKeys: existing ? undefined : photos.map((p) => p.id),
     });
     if (!parsed.success) {
-      setErrors(toFieldErrors(parsed.error.issues));
+      showErrors(toFieldErrors(parsed.error.issues));
       setFormError("Please fix the highlighted fields.");
       return null;
     }
     const pickupChanged = !existing || existing.pickupEnd !== end.toISOString();
     if (pickupChanged && end.getTime() <= Date.now()) {
-      setErrors({ pickupEnd: "The pickup end time has already passed" });
+      showErrors({ pickupEnd: "The pickup end time has already passed" });
       setFormError("Please fix the highlighted fields.");
       return null;
     }
@@ -167,7 +179,7 @@ export function ListingFormScreen() {
 
   function handleError(err: unknown) {
     const field = fieldForError(err);
-    setErrors(field ? { [field]: errorMessage(err) } : apiFieldErrors(err));
+    showErrors(field ? { [field]: errorMessage(err) } : apiFieldErrors(err));
     setFormError(errorMessage(err));
   }
 
@@ -185,11 +197,10 @@ export function ListingFormScreen() {
     }
   }
 
-  async function publish() {
-    if (!preview) return;
+  async function publish(input: CreateListingInput) {
     setSaving(true);
     try {
-      setPublished(await createListing(preview));
+      setPublished(await createListing(input));
     } catch (err) {
       setPreview(null);
       handleError(err);
@@ -198,10 +209,10 @@ export function ListingFormScreen() {
     }
   }
 
-  const screenTitle = id ? "Edit listing" : "Create surplus listing";
+  const screenTitle = id ? "Edit listing" : "Post surplus food";
 
   if (published) {
-    return <PublishedView listing={published} title="Listing published!" text={`Your ${published.title} listing is now visible to nearby BiteGo buyers.`} />;
+    return <PublishedView listing={published} title="Listing is live!" text={`${formatQuantity(published.quantityTotal, published.unit)} of ${published.title} are now visible to nearby BiteGo buyers.`} />;
   }
 
   if (preview) {
@@ -213,7 +224,7 @@ export function ListingFormScreen() {
         categoryName={categories?.find((c) => c.id === preview.categoryId)?.name ?? ""}
         saving={saving}
         onEdit={() => setPreview(null)}
-        onPublish={() => void publish()}
+        onPublish={() => void publish(preview)}
       />
     );
   }
@@ -235,6 +246,7 @@ export function ListingFormScreen() {
 
   const { price: customerPrice, originalPrice: original } = pricesFor(priceType, price, originalPrice);
   const saving_ = (original ?? 0) - (customerPrice ?? 0);
+  const changedFromDefaults = [!!description.trim(), unit !== "PORTION", audience !== "EVERYONE", !!pickupNote.trim()].filter(Boolean).length;
 
   return (
     <Page
@@ -245,28 +257,27 @@ export function ListingFormScreen() {
           {existing ? (
             <Btn title="Save changes" icon="check" loading={saving} onPress={() => void saveEdit()} />
           ) : (
-            <Btn title="Preview listing" icon="eye" onPress={() => { const input = validate(); if (input) setPreview(input); }} />
+            <>
+              <Btn title="Publish now" icon="sparkles" loading={saving} onPress={() => { const input = validate(); if (input) void publish(input); }} />
+              <View style={styles.previewLink}>
+                <TextLink title="Preview first" icon="eye" onPress={() => { const input = validate(); if (input) setPreview(input); }} />
+              </View>
+            </>
           )}
         </>
       }
     >
-      <FormBlock icon="food" title="Food information" subtitle="Tell customers what is available">
+      <FormBlock icon="food" title="Food" subtitle="What is available?">
+        <PhotoPicker photos={photos} onAdd={addPhoto} onRemove={removePhoto} />
         <Field label="Food name" placeholder="e.g. Rice & Curry" value={title} onChangeText={setTitle} error={errors.title} />
         <CategoryChips categories={categories} existing={existing} audience={audience} value={categoryId} onChange={setCategoryId} error={errors.categoryId} />
-        <Field label="Description" optional multiline placeholder="Describe the food, ingredients and anything customers should know..." value={description} onChangeText={setDescription} error={errors.description} />
-        <PhotoPicker photos={photos} onAdd={addPhoto} onRemove={removePhoto} />
       </FormBlock>
 
-      <FormBlock icon="box" title="Quantity" subtitle="Set today's available portions">
-        <Field label="Total portions/items" placeholder="14" keyboardType="number-pad" value={quantity} onChangeText={setQuantity} error={errors.quantityTotal} />
+      <FormBlock icon="wallet" title="Quantity and price" subtitle="Quantity goes down automatically with each reservation">
+        <Field label={`Total ${UNIT_LABELS[unit].toLowerCase()}`} placeholder="10" keyboardType="number-pad" value={quantity} onChangeText={setQuantity} error={errors.quantityTotal} />
         {existing && existing.quantityTotal > existing.quantityAvailable ? (
           <Text style={styles.reservedNote}>{existing.quantityTotal - existing.quantityAvailable} already reserved, so the quantity cannot go below that.</Text>
         ) : null}
-        <Chips label="Unit" options={QUANTITY_UNITS.map((u) => ({ value: u, label: UNIT_LABELS[u] }))} value={unit} onChange={setUnit} error={errors.unit} />
-        <Note icon="sparkles" text="Available quantity decreases automatically with reservations and stops at sold out." />
-      </FormBlock>
-
-      <FormBlock icon="wallet" title="Pricing" subtitle="Free or paid — you decide">
         <PriceSelector value={priceType} onChange={setPriceType} />
         {priceType === "free" ? (
           <Note icon="leaf" title="Customers reserve this food for free" text="Your quantity still applies." />
@@ -291,23 +302,40 @@ export function ListingFormScreen() {
         )}
       </FormBlock>
 
-      <FormBlock icon="clock" title="Availability" subtitle="Choose a realistic pickup window">
+      <FormBlock icon="clock" title="Pickup time" subtitle="Choose a realistic pickup window">
         <PickupTimes start={start} end={end} setStart={setStart} setEnd={setEnd} />
         {errors.pickupStart ? <Text style={styles.errorNote}>{errors.pickupStart}</Text> : null}
         {errors.pickupEnd ? <Text style={styles.errorNote}>{errors.pickupEnd}</Text> : null}
         <Note icon="alert" tone="amber" text={`The listing expires automatically at ${formatTime(end)} when pickup time ends.`} />
-      </FormBlock>
-
-      <FormBlock icon="users" title="Who can reserve" subtitle="Customers, businesses or both">
-        <Chips options={AUDIENCES.map(({ value, label }) => ({ value, label }))} value={audience} onChange={chooseAudience} error={errors.audience} />
-        <Note icon="info" text={AUDIENCES.find((a) => a.value === audience)?.hint ?? ""} />
-      </FormBlock>
-
-      <FormBlock icon="pin" title="Pickup location" subtitle="Customers will collect here">
         <LocationCard shop={shop} />
-        <Field label="Pickup note" optional placeholder="e.g. Collect at the main counter" value={pickupNote} onChangeText={setPickupNote} error={errors.pickupNote} />
       </FormBlock>
+
+      <MoreOptions open={moreOpen} onToggle={() => setMoreOpen(!moreOpen)} changed={changedFromDefaults}>
+        <Field label="Description" optional multiline placeholder="Describe the food, ingredients and anything customers should know..." value={description} onChangeText={setDescription} error={errors.description} />
+        <Chips label="Unit" options={QUANTITY_UNITS.map((u) => ({ value: u, label: UNIT_LABELS[u] }))} value={unit} onChange={setUnit} error={errors.unit} />
+        <Chips label="Who can reserve" options={AUDIENCES.map(({ value, label }) => ({ value, label }))} value={audience} onChange={chooseAudience} error={errors.audience} />
+        <Note icon="info" text={AUDIENCES.find((a) => a.value === audience)?.hint ?? ""} />
+        <Field label="Pickup note" optional placeholder="e.g. Collect at the main counter" value={pickupNote} onChangeText={setPickupNote} error={errors.pickupNote} />
+      </MoreOptions>
     </Page>
+  );
+}
+
+// A section that starts closed. Tap the header to show or hide the fields inside.
+function MoreOptions({ open, onToggle, changed, children }: { open: boolean; onToggle: () => void; changed: number; children: ReactNode }) {
+  return (
+    <View style={styles.more}>
+      <Pressable accessibilityRole="button" accessibilityState={{ expanded: open }} onPress={onToggle} style={({ pressed }) => [styles.moreHeader, pressed && styles.pressed]}>
+        <View style={styles.moreIcon}><Icon name="settings" size={18} color={color.primary} /></View>
+        <View style={styles.flex}>
+          <Text style={styles.moreTitle}>More options</Text>
+          <Text style={styles.moreSub}>{changed > 0 ? `${changed} changed` : "Description, unit, who can reserve, pickup note"}</Text>
+        </View>
+        <Text style={styles.optional}>Optional</Text>
+        <Icon name={open ? "chevronDown" : "chevron"} size={18} color={color.muted} />
+      </Pressable>
+      {open ? <View style={styles.moreBody}>{children}</View> : null}
+    </View>
   );
 }
 
@@ -417,6 +445,7 @@ function changesFrom(existing: SellerListingDto, next: CreateListingInput): Upda
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
+  pressed: { opacity: 0.85 },
   reservedNote: { fontSize: 12, color: color.warnText, marginTop: 6 },
   errorNote: { fontSize: 12, color: color.error, marginTop: 8, fontWeight: "500" },
   twoFields: { flexDirection: "row", gap: 10 },
@@ -425,6 +454,14 @@ const styles = StyleSheet.create({
   savingsIcon: { width: 36, height: 36, borderRadius: 10, backgroundColor: color.tint, alignItems: "center", justifyContent: "center" },
   savingsTitle: { fontSize: 14, fontWeight: "700", color: color.primary },
   savingsSub: { fontSize: 12, color: color.primary, marginTop: 2 },
+  previewLink: { alignItems: "center" },
+  more: { borderRadius: 19, borderWidth: 1, borderColor: color.softLine, backgroundColor: color.surface, marginBottom: 13, overflow: "hidden" },
+  moreHeader: { flexDirection: "row", alignItems: "center", gap: 10, padding: 16 },
+  moreIcon: { width: 36, height: 36, borderRadius: 11, backgroundColor: color.tint, alignItems: "center", justifyContent: "center" },
+  moreTitle: { fontSize: 15, fontWeight: "800", color: color.text },
+  moreSub: { fontSize: 12, color: color.muted, marginTop: 2 },
+  optional: { fontSize: 11, color: color.muted },
+  moreBody: { paddingHorizontal: 16, paddingBottom: 16, borderTopWidth: 1, borderTopColor: color.softLine },
   footerRow: { flexDirection: "row", gap: 8 },
   footerNarrow: { flex: 0.7 },
   previewNote: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, padding: 11, borderRadius: 12, backgroundColor: color.tintSoft, marginBottom: 14 },
