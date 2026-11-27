@@ -7,7 +7,7 @@ import { Icon, type IconName } from "./Icon";
 import { ListingCard } from "./ListingCard";
 import { Btn, Chips, Page, Stepper, SuccessIcon } from "./kit";
 
-// Pieces shared by the quick and the detailed listing forms.
+// Pieces used by the listing form.
 
 export type PriceType = "free" | "discounted" | "custom";
 
@@ -181,7 +181,7 @@ export function LocationCard({ shop }: { shop: SellerBusinessDto | null }) {
 }
 
 // "Listing is live!" after publishing.
-export function PublishedView({ listing, title, text, quick }: { listing: SellerListingDto; title: string; text: string; quick?: boolean }) {
+export function PublishedView({ listing, title, text }: { listing: SellerListingDto; title: string; text: string }) {
   const router = useRouter();
   const end = new Date(listing.pickupEnd);
   return (
@@ -191,41 +191,21 @@ export function PublishedView({ listing, title, text, quick }: { listing: Seller
         <Text style={styles.successTitle}>{title}</Text>
         <Text style={styles.successText}>{text}</Text>
       </View>
-      {quick ? (
-        <View style={styles.summary}>
-          <SummaryRow icon="box" title={`${listing.quantityAvailable} available`} sub="Quantity goes down with each reservation" />
-          <SummaryRow icon="clock" title={`Pickup ${formatTime(new Date(listing.pickupStart))} – ${formatTime(end)}`} sub={`Expires automatically at ${formatTime(end)}`} />
-          <SummaryRow icon="bell" title="Automatic updates are on" sub="Nearby buyers are told about new food" last />
-        </View>
-      ) : (
-        <View style={styles.published}>
-          <ListingCard listing={listing} compact />
-          <View style={styles.publishNote}>
-            <Icon name="clock" size={20} color={color.warnText} />
-            <View style={styles.flex}>
-              <Text style={styles.publishNoteTitle}>Available until {formatTime(end)}</Text>
-              <Text style={styles.publishNoteSub}>It will expire automatically after pickup ends.</Text>
-            </View>
+      <View style={styles.published}>
+        <ListingCard listing={listing} compact />
+        <View style={styles.publishNote}>
+          <Icon name="clock" size={20} color={color.warnText} />
+          <View style={styles.flex}>
+            <Text style={styles.publishNoteTitle}>Available until {formatTime(end)}</Text>
+            <Text style={styles.publishNoteSub}>It will expire automatically after pickup ends.</Text>
           </View>
         </View>
-      )}
+      </View>
       <View style={styles.successActions}>
         <Btn title="View listing" iconRight="arrow" onPress={() => router.replace(`/sell/${listing.id}`)} />
         <Btn title="Back to dashboard" variant="ghost" onPress={() => router.dismissTo("/sell")} />
       </View>
     </Page>
-  );
-}
-
-function SummaryRow({ icon, title, sub, last }: { icon: IconName; title: string; sub: string; last?: boolean }) {
-  return (
-    <View style={[styles.summaryRow, !last && styles.summaryBorder]}>
-      <Icon name={icon} color={color.primary} />
-      <View style={styles.flex}>
-        <Text style={styles.summaryTitle}>{title}</Text>
-        <Text style={styles.summarySub}>{sub}</Text>
-      </View>
-    </View>
   );
 }
 
@@ -249,11 +229,6 @@ const styles = StyleSheet.create({
   success: { alignItems: "center", paddingTop: 48, gap: 8 },
   successTitle: { fontSize: 26, fontWeight: "800", letterSpacing: -0.6, color: color.text, marginTop: 22, textAlign: "center" },
   successText: { fontSize: 14, lineHeight: 21, color: color.muted, textAlign: "center", paddingHorizontal: 20 },
-  summary: { marginTop: 22, paddingHorizontal: 14, borderRadius: 18, borderWidth: 1, borderColor: color.line, backgroundColor: color.surface },
-  summaryRow: { minHeight: 62, flexDirection: "row", alignItems: "center", gap: 11 },
-  summaryBorder: { borderBottomWidth: 1, borderBottomColor: color.softLine },
-  summaryTitle: { fontSize: 14, fontWeight: "700", color: color.text },
-  summarySub: { fontSize: 12, color: color.muted, marginTop: 2 },
   published: { marginTop: 22, padding: 10, gap: 10, borderRadius: 20, borderWidth: 1, borderColor: color.line, backgroundColor: color.surface },
   publishNote: { flexDirection: "row", alignItems: "center", gap: 10, padding: 12, borderRadius: 12, backgroundColor: color.amberSoft },
   publishNoteTitle: { fontSize: 14, fontWeight: "700", color: color.warnText },
